@@ -6,6 +6,38 @@
 
 ## Session Log
 
+### 2026-07-17 ~10:53 — Mitigated BUG-1 (WebSocket keepalive drop) — live validation still pending
+
+**What changed today:** Checked whether BUG-1 could be reproduced live first, per the previous session's "exact next command." It couldn't: neither ComfyUI (`127.0.0.1:8188`) nor the ManyTV backend was running (both `curl` checks returned no connection; only Ollama at `11434` was up). Starting ComfyUI to force a real multi-minute GPU generation wasn't something to do unprompted, so instead of blocking on that, implemented the fix the diagnosis already pointed to: `ComfyUIClient.wait_for_completion` (`backend/core/comfyui_client.py`) now catches a dropped WebSocket and falls back to a new `_poll_history_until_done` method, which polls `/history/{prompt_id}` every 3s until ComfyUI records a finished entry, instead of failing the job outright. Rationale: ComfyUI keeps executing a queued prompt regardless of whether the monitoring socket stays connected, so a dropped socket was never actually proof the job failed. A real `execution_error` from ComfyUI (an actual generation failure) still raises immediately and is untouched by this change; a genuinely dead ComfyUI (not just a dropped socket) still fails fast because `get_history` then raises an `httpx` error, not a `ComfyUIError`, which isn't caught by the polling loop's retry. Verified with 4 new mocked unit tests — real behavior against a live ComfyUI instance has **not** been observed yet, since none was running this session.
+
+**Files modified:**
+- `backend/core/comfyui_client.py` — added `import asyncio`; `wait_for_completion`'s except-block now falls back to the new `_poll_history_until_done` instead of raising `ComfyUIError` directly; added `_poll_history_until_done`
+- `tests/test_comfyui_client.py` (new) — 4 cases: polling retries until history appears, non-`ComfyUIError` propagates immediately, a dropped socket triggers the fallback, a real `execution_error` still raises immediately
+- `TODO.md` — BUG-1 marked mitigated (not closed) with full detail; Completed/Current-tasks/Missing-features/Recommended-next-steps sections updated to match
+- `SESSION_STATE.md` — this entry
+
+**Remaining problems** (see `TODO.md` for full detail):
+- **BUG-1 is mitigated but not closed** — the fix is implemented and unit-tested against mocks, but the actual failure was only ever observed against a real running ComfyUI, and the fix hasn't been run against one yet. This is the single most important thing to do next.
+- BUG-3 (P1) — Wildcard CORS + zero authentication on every endpoint. Still open.
+- BUG-4 (P2) — Partial storyboard failure silently discards already-succeeded shots' results. Still open, and now the most impactful remaining gap — pairs with BUG-1 validation since a mid-job failure after some shots succeed is exactly the scenario BUG-4 is about.
+- BUG-5 (P3) — Two redundant `ComfyUIClient` instances (cosmetic). Still open.
+- Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) are still untested.
+
+**Exact next command/task:**
+```powershell
+# Terminal 1
+D:\NewProjects\ComfyUI\.venv\Scripts\Activate.ps1
+D:\NewProjects\ManyTV\scripts\run_comfyui.ps1 -ComfyUIPath D:\NewProjects\ComfyUI -VramHeadroomGB 2
+
+# Terminal 2
+D:\NewProjects\ManyTV\.venv\Scripts\Activate.ps1
+copy .env.example .env   # if not already present
+uvicorn backend.app:app --reload --port 8000
+```
+Then submit a real multi-shot `/api/storyboard` job (2-3 shots is enough) and watch the backend log for either a clean run or, if a WebSocket drop recurs, the new `"WebSocket to ComfyUI dropped ... falling back to polling"` line followed by the job still completing. Once that's observed, flip BUG-1 from "mitigated" to "closed" in `TODO.md`. Only after that (or if the user prefers to skip straight ahead): pick up BUG-4.
+
+---
+
 ### 2026-07-17 ~10:40 — Fixed BUG-2 (path traversal in `workflow_name`)
 
 **What changed today:** `git init` + baseline commit landed first (see prior log entry's "exact next command" — done as the first commit of this session, capturing the repo exactly as the audit left it, docs included). Then BUG-2 was fixed: `StoryboardRequest.workflow_name` (`backend/models/schemas.py`) now requires `^[A-Za-z0-9_-]+$`, rejecting `/`, `\`, `.`, spaces, and empty string at the Pydantic validation boundary before the value can reach `_load_workflow`'s filesystem path construction. Test tooling was bootstrapped from nothing: `pytest` added to `requirements.txt` and installed into `.venv`, first test module `tests/test_schemas.py` written (11 cases: default value, 8 rejected traversal/invalid inputs, 3 accepted valid names) and run — all passing. `.pytest_cache/` added to `.gitignore`.
@@ -80,11 +112,11 @@ Then proceed to `TODO.md` step 2: fix BUG-2 (sanitize `workflow_name` in `backen
 
 These weren't answerable from the repository alone:
 
-1. Is the WebSocket keepalive drop (BUG-1) a one-off, or does it reproduce reliably on longer jobs? Worth attempting a fresh multi-shot run to see if it's timing-dependent (e.g., only shots that take >~50s trigger it) before investing in a fix.
-2. Is this backend ever expected to be reachable from anywhere other than `127.0.0.1` on this one machine? That answer determines how urgently BUG-3 (wildcard CORS/no auth) needs fixing versus just documenting as "acceptable for the current single-machine, localhost-only deployment." (BUG-2, the path-traversal input itself, is now fixed regardless.)
+1. ~~Is the WebSocket keepalive drop (BUG-1) a one-off, or does it reproduce reliably on longer jobs?~~ Still not directly answered (ComfyUI wasn't running to test against), but no longer blocking — the fix implemented this session (poll `/history` as a fallback) is robust to the drop regardless of how often it recurs, since it doesn't depend on knowing the exact trigger. Live validation is still worth doing (see Session Log above) to confirm the fallback actually engages and completes the job, not to diagnose the trigger further.
+2. Is this backend ever expected to be reachable from anywhere other than `127.0.0.1` on this one machine? That answer determines how urgently BUG-3 (wildcard CORS/no auth) needs fixing versus just documenting as "acceptable for the current single-machine, localhost-only deployment." (BUG-2, the path-traversal input itself, is fixed regardless.)
 
 ---
 
 ## Recommended entry point for next session
 
-Read `TODO.md`'s "Recommended next steps" section and continue from step 3 (BUG-1) unless the user directs otherwise — it's the one thing standing between "works for one shot" and "reliably works for a real multi-shot job," which is the actual product goal.
+Run the exact next command/task logged above (start ComfyUI + backend, submit a real multi-shot storyboard job) to live-validate the BUG-1 fix. If that's not practical right now (e.g. no time for a real GPU run), skip straight to BUG-4 per `TODO.md` step 4 — it's independently valuable and doesn't require live services to implement or test.

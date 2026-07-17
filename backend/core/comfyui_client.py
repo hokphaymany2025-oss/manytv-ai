@@ -7,6 +7,7 @@ keeps model loading, VRAM scheduling (--lowvram/--gpu-only) and node
 execution entirely inside ComfyUI's own process, where it belongs.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable, Optional
@@ -57,6 +58,7 @@ class ComfyUIClient:
         self,
         prompt_id: str,
         on_progress: Optional[Callable[[dict[str, Any]], None]] = None,
+        history_poll_interval_seconds: float = 3.0,
     ) -> dict[str, Any]:
         """Blocks (async) until ComfyUI finishes executing `prompt_id`.
 
@@ -94,11 +96,43 @@ class ComfyUIClient:
                     # ComfyUI emits an "executing" event with node=None once
                     # the whole prompt graph has finished.
                     if message.get("type") == "executing" and data.get("node") is None:
-                        break
+                        return await self.get_history(prompt_id)
         except (websockets.exceptions.WebSocketException, OSError) as exc:
-            raise ComfyUIError(f"Lost connection to ComfyUI WebSocket at {ws_url}") from exc
+            # Confirmed via a real run (see TODO.md BUG-1): this fires even
+            # though the client disables its own keepalive pings above --
+            # most likely ComfyUI's own WebSocket server failing its side of
+            # the keepalive while its event loop is blocked mid-generation.
+            # Either way, the prompt itself keeps executing inside ComfyUI
+            # regardless of whether this monitoring connection stays up (the
+            # generation was never tied to the socket), so a dropped
+            # connection isn't proof the job failed -- fall back to polling
+            # `/history` for the real outcome instead of failing the whole
+            # storyboard job over a monitoring-channel hiccup. Bounded by the
+            # caller's GENERATION_TIMEOUT_SECONDS wrap (asyncio.wait_for in
+            # storyboard.py), not by anything in this method.
+            logger.warning(
+                "WebSocket to ComfyUI dropped while waiting for prompt %s (%s); "
+                "falling back to polling /history -- the job may still be running.",
+                prompt_id,
+                exc,
+            )
+            return await self._poll_history_until_done(prompt_id, history_poll_interval_seconds)
 
-        return await self.get_history(prompt_id)
+    async def _poll_history_until_done(self, prompt_id: str, poll_interval_seconds: float) -> dict[str, Any]:
+        """Polls `/history/{prompt_id}` until ComfyUI records a finished entry.
+
+        ComfyUI only adds a prompt to `/history` once it has finished
+        executing (success or error) -- get_history() raises ComfyUIError
+        while it's still absent, which this treats as "not done yet" and
+        retries. A genuinely dead ComfyUI surfaces as an httpx error instead
+        (not a ComfyUIError) and propagates immediately rather than retrying
+        for the full timeout window.
+        """
+        while True:
+            try:
+                return await self.get_history(prompt_id)
+            except ComfyUIError:
+                await asyncio.sleep(poll_interval_seconds)
 
     async def get_history(self, prompt_id: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30) as client:
