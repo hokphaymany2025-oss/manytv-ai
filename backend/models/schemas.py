@@ -27,7 +27,12 @@ class StoryboardRequest(BaseModel):
     script: str = Field(..., description="Full script text; ignored if `shots` is provided.")
     workflow_name: str = Field(
         "default_t2v",
-        description="Filename (without extension) of a ComfyUI API-format workflow JSON in backend/workflows/",
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description=(
+            "Filename (without extension) of a ComfyUI API-format workflow JSON in "
+            "backend/workflows/. Letters, digits, underscore, hyphen only -- no path "
+            "separators or extension, since this is joined directly onto a filesystem path."
+        ),
     )
     shots: Optional[list[StoryboardShot]] = Field(
         default=None,

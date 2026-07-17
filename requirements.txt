@@ -10,6 +10,9 @@ python-dotenv>=1.0
 python-multipart>=0.0.9
 openai>=1.50   # OpenAI-compatible client; talks to local Ollama by default
 
+# ---- Dev / test ----
+pytest>=8.0
+
 # ---- Intel Arc (XPU) torch stack ----
 # Strictly speaking, ONLY ComfyUI's own venv needs this to actually
 # generate anything -- inference happens entirely inside the ComfyUI

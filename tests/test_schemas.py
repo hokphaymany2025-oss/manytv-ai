@@ -1,0 +1,40 @@
+"""Regression test for BUG-2: workflow_name must not allow path traversal.
+
+_load_workflow() in backend/api/routes/storyboard.py joins workflow_name
+directly onto a filesystem path (settings.workflow_path / f"{workflow_name}.json"),
+so the Pydantic model is the boundary that has to reject anything but a bare
+filename before it ever reaches disk I/O.
+"""
+
+import pytest
+from pydantic import ValidationError
+
+from backend.models.schemas import StoryboardRequest
+
+
+def test_workflow_name_default_is_valid():
+    request = StoryboardRequest(script="A lighthouse at dawn.")
+    assert request.workflow_name == "default_t2v"
+
+
+@pytest.mark.parametrize(
+    "workflow_name",
+    [
+        "../../../../etc/passwd",
+        "../secrets",
+        "sub/dir",
+        "sub\\dir",
+        "name.json",
+        "name with spaces",
+        "",
+    ],
+)
+def test_workflow_name_rejects_path_traversal_and_invalid_chars(workflow_name):
+    with pytest.raises(ValidationError):
+        StoryboardRequest(script="x", workflow_name=workflow_name)
+
+
+@pytest.mark.parametrize("workflow_name", ["default_t2v", "my-workflow_2", "ABC123"])
+def test_workflow_name_accepts_valid_names(workflow_name):
+    request = StoryboardRequest(script="x", workflow_name=workflow_name)
+    assert request.workflow_name == workflow_name
