@@ -2,18 +2,18 @@ import './App.css'
 import { JobList } from './components/JobList'
 import { ScriptForm } from './components/ScriptForm'
 import { StoryboardForm } from './components/StoryboardForm'
-import { useTrackedJobs } from './useTrackedJobs'
+import { useJobList } from './useJobList'
 
 function App() {
-  const { jobs, trackJob, updateJob } = useTrackedJobs()
+  const { jobs, refresh, updateJob } = useJobList()
 
   return (
     <div className="app">
       <h1>ManyTV</h1>
 
       <div className="forms">
-        <ScriptForm onSubmitted={trackJob} />
-        <StoryboardForm onSubmitted={trackJob} />
+        <ScriptForm onSubmitted={refresh} />
+        <StoryboardForm onSubmitted={refresh} />
       </div>
 
       <h2>Jobs</h2>

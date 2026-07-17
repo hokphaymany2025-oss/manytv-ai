@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { submitStoryboard } from '../api'
 
 interface Props {
-  onSubmitted: (jobId: string) => void
+  onSubmitted: () => void
 }
 
 export function StoryboardForm({ onSubmitted }: Props) {
@@ -17,12 +17,12 @@ export function StoryboardForm({ onSubmitted }: Props) {
     setSubmitting(true)
     setError(null)
     try {
-      const response = await submitStoryboard({
+      await submitStoryboard({
         script,
         workflow_name: workflowName,
         project_id: projectId || undefined,
       })
-      onSubmitted(response.job_id)
+      onSubmitted()
       setScript('')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

@@ -32,6 +32,11 @@ export function getJob(jobId: string): Promise<JobStatusResponse> {
   return request(`/api/jobs/${jobId}`)
 }
 
+export function listJobs(status?: string): Promise<JobStatusResponse[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : ''
+  return request(`/api/jobs${query}`)
+}
+
 export function retryJob(jobId: string): Promise<JobStatusResponse> {
   return request(`/api/jobs/${jobId}/retry`, { method: 'POST' })
 }

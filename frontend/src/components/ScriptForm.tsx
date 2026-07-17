@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { submitScript } from '../api'
 
 interface Props {
-  onSubmitted: (jobId: string) => void
+  onSubmitted: () => void
 }
 
 export function ScriptForm({ onSubmitted }: Props) {
@@ -18,13 +18,13 @@ export function ScriptForm({ onSubmitted }: Props) {
     setSubmitting(true)
     setError(null)
     try {
-      const response = await submitScript({
+      await submitScript({
         prompt,
         tone,
         target_duration_seconds: targetDurationSeconds,
         project_id: projectId || undefined,
       })
-      onSubmitted(response.job_id)
+      onSubmitted()
       setPrompt('')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

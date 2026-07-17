@@ -6,6 +6,35 @@
 
 ## Session Log
 
+### 2026-07-17 ~22:15 — Frontend wired to GET /api/jobs; first automated frontend tests
+
+**What was completed:** User asked for the two prior sessions' work to be committed first (done — see the commit note at the end of this entry), then asked for the next feature. Left as `<TBD>` in their milestone-status message, so confirmed via `AskUserQuestion`: wiring the frontend to the new `GET /api/jobs` endpoint (top of `TODO.md`'s backlog) over the other option (pushing to a GitHub remote). User's message also explicitly asked for "Review architecture / Add feature plan / Define tests" before starting, so used Plan mode (overwriting the previous session's now-unrelated plan file) rather than just diving in.
+
+- **`frontend/src/api.ts`**: added `listJobs(status?: string)` → `GET /api/jobs` or `GET /api/jobs?status=...`.
+- **`frontend/src/useJobList.ts`** (new, replaces `useTrackedJobs.ts` which was deleted outright — not left as dead code): polls `listJobs()` every 3s, holds `jobs: JobStatusResponse[]` directly. `refresh()` fires on mount, on each interval tick, and immediately after a new job is submitted (so it appears without waiting for the next tick). `updateJob(job)` still merges a single already-known-updated job (from a retry/cancel response) in place, same as before.
+- **`frontend/src/App.tsx`**, **`ScriptForm.tsx`**, **`StoryboardForm.tsx`**: `onSubmitted` prop simplified from `(jobId: string) => void` to `() => void` — the id is no longer needed by the caller now that there's no client-side tracking to add it to.
+- No backend changes at all — `GET /api/jobs` already returned exactly the shape needed.
+
+**First automated frontend tests** (none existed before this — the initial frontend milestone was verified via TypeScript compilation + one live Playwright session only): added `vitest` + `@testing-library/react` + `jsdom` as devDependencies, config folded into the existing `vite.config.ts` (`test: { environment: 'jsdom', globals: true }`, no second config file), new `"test": "vitest run"` script. `frontend/src/api.test.ts` (3 cases — unfiltered call, `?status=` query building, error-detail propagation) and `frontend/src/useJobList.test.tsx` (4 cases — initial-mount fetch, interval re-fetch, in-place `updateJob`, resilience to a failed poll). One real debugging note worth keeping: mixing `@testing-library/react`'s `waitFor` (which polls via *real* timers internally) with `vi.useFakeTimers()` hangs every assertion until vitest's own 5s test timeout — fixed by either not using fake timers at all (most tests) or engaging fake timers *before* the hook mounts and flushing the initial effect with `vi.advanceTimersByTimeAsync(0)` instead of `waitFor` (the interval test). `npm run test` → 7 passed. `npm run build` still compiles clean.
+
+**Live validation, the real point of this session:** started a real backend + real Vite dev server, then used the same throwaway Playwright setup from an earlier session (still cached in the scratchpad) to drive **two independent browser contexts** (separate `localStorage`, standing in for two different browsers/machines) against the live dashboard. Browser A submitted a new job; polled browser A specifically for the top row's id to *change* from what it was before submitting (closes a real timing race an earlier, cruder version of this check had — comparing raw job-row counts between the two browsers is inherently racy right now anyway, since this backend still has genuinely queued/running jobs left over from earlier sessions' live tests, so total counts can legitimately drift between two measurements taken seconds apart regardless of anything this feature does). Once browser A's new job id was confirmed, polled browser B — which never submitted anything itself, in a fully separate context — and confirmed it showed that exact same job id within one poll interval, purely from `GET /api/jobs` server-side history. Zero console errors on a plain page load.
+
+**Commits from the prior two sessions** (requested at the start of this session, before starting this new feature): `f8cc8e1` (frontend addition) and `b7e6a05` (CORS/CI/retry-cancel/BUG-6/list-jobs backend work) — see the git log for detail; not re-described here since they predate this session's actual work.
+
+**Files changed this session:** `frontend/src/api.ts`, `frontend/src/useJobList.ts` (new), `frontend/src/useTrackedJobs.ts` (deleted), `frontend/src/App.tsx`, `frontend/src/components/ScriptForm.tsx`, `frontend/src/components/StoryboardForm.tsx`, `frontend/src/api.test.ts` (new), `frontend/src/useJobList.test.tsx` (new), `frontend/vite.config.ts`, `frontend/package.json`, `frontend/package-lock.json`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- CI still never observed running on a real GitHub Actions job — this repo still has no git remote. Now the single top open item.
+- No status-filter UI in the dashboard (backend supports `?status=`, not exposed yet) — small, optional, low priority.
+- `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` still have no dedicated direct tests.
+- BUG-5 (cosmetic) and a dependency lockfile still open.
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection` that both ports are free.
+- This session's changes are **not yet committed** — only the prior two sessions' work was committed at the start of this session, before this feature began.
+
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item. Independent of that: commit this session's frontend changes (not yet done).
+
+---
+
 ### 2026-07-17 ~21:30 — List-jobs endpoint added, live-validated against real multi-session history
 
 **What was completed:** Picked up the prior session's "Exact next task" — verified repo consistency first (git log/status matched what `SESSION_STATE.md` claimed exactly: 5 commits, all of the last two sessions' work still uncommitted; 72/72 tests passing; no stray backend/frontend processes listening), then implemented `GET /api/jobs`.
@@ -297,19 +326,20 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-4 are closed; job persistence + resume, CORS/auth hardening, CI, job retry, job cancellation, a first frontend, and a list-jobs endpoint are all done and live-validated (see the `~21:30` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- Working tree has substantial uncommitted changes across two sessions now — verify fresh with `git log --oneline` / `git status` rather than trusting this file if time has passed.
-- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests (20+ real jobs as of this session).
-- **No live services running** — the test backend started during this session's live verification was stopped cleanly at the end; confirmed via `Get-NetTCPConnection` that port 8000 is free.
-- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only.
-- 78 tests passing (`python -m pytest tests/ -v`).
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, and the frontend using that endpoint are all done and live-validated (see the `~22:15` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- Two commits landed at the start of the `~22:15` session (`f8cc8e1` frontend, `b7e6a05` backend hardening) covering everything through the list-jobs-endpoint session. **This session's own changes (frontend wired to GET /api/jobs + its first test suite) are not yet committed.** Verify fresh with `git log --oneline` / `git status` rather than trusting this file.
+- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests.
+- **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
+- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. Now the single top open item.
+- Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 7 tests passing (`cd frontend && npm run test`), first automated frontend suite.
 
-**Exact next task:** Update the frontend (`frontend/src/useTrackedJobs.ts` or a sibling hook) to use the new `GET /api/jobs` endpoint instead of (or alongside) its current `localStorage`-only job tracking — would show real server-side job history from any client. Pushing this repo to a GitHub remote (to finally confirm CI fires for real) is the other standing item, independent either order.
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and now the only thing left on the main backlog. Commit the current session's frontend changes first (not yet done).
 
 **Commands to resume:**
 ```powershell
 cd D:\NewProjects\ManyTV
-git log --oneline -5        # confirm what's actually committed
-git status                  # confirm working tree state
-python -m pytest tests/ -v  # confirm still 78 passed before continuing
+git log --oneline -5              # confirm what's actually committed
+git status                        # confirm working tree state
+python -m pytest tests/ -v        # confirm still 78 passed
+cd frontend && npm run test       # confirm still 7 passed
 ```
