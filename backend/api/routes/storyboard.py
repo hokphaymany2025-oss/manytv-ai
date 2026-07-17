@@ -24,11 +24,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi import Path as FastAPIPath
+from fastapi.responses import FileResponse
 
 from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings, get_settings
-from backend.core.job_store import get_job_store
-from backend.core.worker import Job, ShotStatus, worker
+from backend.core.job_store import JobStore, get_job_store
+from backend.core.worker import Job, JobCancelled, JobStatus, ShotStatus, worker
 from backend.models.schemas import (
     JobStatusResponse,
     ShotStatusResponse,
@@ -122,6 +124,17 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
 
     results = []
     for shot_row in shot_rows:
+        # Checked at the top of every iteration -- including ones about to
+        # be DONE-skipped below -- so a /cancel request is noticed between
+        # any two shots, not just before the next one that does real work.
+        # Only takes effect between shots: a shot already SUBMITTED to
+        # ComfyUI keeps running to completion (bounded by
+        # GENERATION_TIMEOUT_SECONDS) since there's no ComfyUI /interrupt
+        # call here -- see TODO.md for why that's a deliberate scope limit.
+        current_job_row = await store.get_job(job.id)
+        if current_job_row is not None and current_job_row["status"] == JobStatus.CANCELLING.value:
+            raise JobCancelled(f"Job {job.id} cancelled during shot processing.")
+
         shot_index = shot_row["shot_index"]
         shot = shots_by_index[shot_index]
 
@@ -227,12 +240,22 @@ async def create_storyboard(request: StoryboardRequest) -> StoryboardResponse:
     return StoryboardResponse(job_id=job.id, status=job.status.value, shot_count=len(shots))
 
 
-@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: str) -> JobStatusResponse:
-    store = get_job_store()
-    job_row = await store.get_job(job_id)
+async def _build_job_status_response(
+    store: JobStore, job_id: str, job_row: Optional[dict[str, Any]] = None,
+) -> JobStatusResponse:
+    """Builds JobStatusResponse from persisted state.
+
+    Factored out of get_job_status so retry_job/cancel_job can return the
+    same shape after mutating job/shot state, without re-deriving this
+    shots/result-construction logic a second and third time. list_jobs_route
+    passes an already-fetched `job_row` (from its own list_jobs() query) to
+    avoid an N+1 re-fetch per job in the list; every other caller omits it
+    and gets the existing fetch-by-id-or-404 behavior.
+    """
     if job_row is None:
-        raise HTTPException(status_code=404, detail="Job not found.")
+        job_row = await store.get_job(job_id)
+        if job_row is None:
+            raise HTTPException(status_code=404, detail="Job not found.")
 
     shots_response: Optional[list[ShotStatusResponse]] = None
     result: Optional[dict[str, Any]] = None
@@ -274,3 +297,116 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
         error=job_row["error"],
         shots=shots_response,
     )
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str) -> JobStatusResponse:
+    return await _build_job_status_response(get_job_store(), job_id)
+
+
+@router.get("/jobs", response_model=list[JobStatusResponse])
+async def list_jobs_route(status: Optional[str] = None) -> list[JobStatusResponse]:
+    """Lists jobs, newest first. `status` is an optional comma-separated
+    filter (e.g. `?status=failed,cancelled`); omitted means every job --
+    this is the full-history endpoint the frontend's client-tracked
+    localStorage job list was standing in for until now (see TODO.md).
+    """
+    store = get_job_store()
+    status_in = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    rows = await store.list_jobs(status_in=status_in)
+    return [await _build_job_status_response(store, row["id"], job_row=row) for row in rows]
+
+
+_RETRYABLE_STATUSES = {JobStatus.FAILED.value, JobStatus.CANCELLED.value}
+
+
+@router.post("/jobs/{job_id}/retry", response_model=JobStatusResponse)
+async def retry_job(job_id: str) -> JobStatusResponse:
+    store = get_job_store()
+    job_row = await store.get_job(job_id)
+    if job_row is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job_row["status"] not in _RETRYABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job is '{job_row['status']}'; only failed or cancelled jobs can be retried.",
+        )
+    if job_row["started_at"] is None:
+        # A job cancelled while still QUEUED never created any shot rows and
+        # its original queue entry was never consumed -- there is zero
+        # partial progress to resume from, and resubmitting it here would
+        # create a second queue entry for the same job id racing against
+        # whichever the worker pops first. Nothing is lost by rejecting this
+        # and asking for a fresh submission instead.
+        raise HTTPException(
+            status_code=409,
+            detail="Job never started running (cancelled while queued) -- nothing to resume; submit a new job instead.",
+        )
+
+    await store.reset_job_for_retry(job_id, JobStatus.QUEUED.value)
+    if job_row["kind"] == "storyboard":
+        # Only rows truly FAILED are reset -- SUBMITTED rows deliberately
+        # keep going through _run_storyboard_job's existing history-
+        # reconcile-or-resubmit branch untouched, and DONE rows are already
+        # correct.
+        await store.reset_shots_by_status(job_id, ShotStatus.FAILED.value, ShotStatus.PENDING.value)
+
+    updated_row = await store.get_job(job_id)
+    job = Job(
+        id=updated_row["id"],
+        kind=updated_row["kind"],
+        payload=json.loads(updated_row["payload"]),
+        status=JobStatus(updated_row["status"]),
+        created_at=updated_row["created_at"],
+    )
+    await worker.resubmit(job)
+    logger.info("Job %s retried.", job_id)
+    return await _build_job_status_response(store, job_id)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobStatusResponse)
+async def cancel_job(job_id: str) -> JobStatusResponse:
+    store = get_job_store()
+    job_row = await store.get_job(job_id)
+    if job_row is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    status = job_row["status"]
+    if status in (JobStatus.CANCELLED.value, JobStatus.CANCELLING.value):
+        pass  # already cancelled or on its way there -- idempotent no-op
+    elif status == JobStatus.QUEUED.value:
+        await store.update_job_status(job_id, JobStatus.CANCELLED.value, finished_at=time.time())
+    elif status in (JobStatus.RUNNING.value, JobStatus.RESUMING.value):
+        if job_row["kind"] == "generate_script":
+            # A single `await llm_client.generate_script(...)` call has no
+            # per-chunk checkpoint to hook a cooperative check into -- only
+            # a still-QUEUED generate_script job can be cancelled.
+            raise HTTPException(
+                status_code=409,
+                detail="generate_script jobs cannot be cancelled once running (no per-chunk checkpoint) -- only while queued.",
+            )
+        await store.update_job_status(job_id, JobStatus.CANCELLING.value)
+    else:  # DONE, FAILED
+        raise HTTPException(status_code=409, detail=f"Job is '{status}'; nothing to cancel.")
+
+    logger.info("Job %s cancel requested (was %s).", job_id, status)
+    return await _build_job_status_response(store, job_id)
+
+
+@router.get("/jobs/{job_id}/files/{shot_index}/{filename}")
+async def download_shot_file(
+    job_id: str = FastAPIPath(..., pattern=r"^[A-Za-z0-9_-]+$"),
+    shot_index: int = FastAPIPath(...),
+    filename: str = FastAPIPath(..., pattern=r"^[A-Za-z0-9_.-]+$"),
+) -> FileResponse:
+    # Both patterns exclude path separators entirely, so joining them onto
+    # a fixed directory below can't escape it by construction -- same
+    # reasoning as the workflow_name fix for BUG-2 in models/schemas.py.
+    # Deliberately not a blanket StaticFiles mount over the whole output/
+    # dir: Settings.db_path defaults to output/jobs.db, which would then be
+    # fetchable by anyone who can reach this origin.
+    settings = get_settings()
+    path = settings.output_path / job_id / f"shot_{shot_index:03d}" / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(path)

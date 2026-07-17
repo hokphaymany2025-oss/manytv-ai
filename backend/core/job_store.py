@@ -8,16 +8,26 @@ worker.py is scoped to concurrency (exactly one job running at a time) and
 has zero knowledge of ComfyUI, shots, or workflows -- persistence is an
 orthogonal concern, kept here so both stay independently testable.
 
-There is only ever one writer (SingleSlotWorker's single consumer task, by
-its own construction) plus occasional readers (GET /api/jobs/{id}), so one
-long-lived connection in WAL mode needs no extra locking. Every public
-method wraps its synchronous sqlite3 call in asyncio.to_thread -- no
-aiosqlite dependency, since the actual concurrency need here is minimal.
+Every public method wraps its synchronous sqlite3 call in asyncio.to_thread
+-- no aiosqlite dependency, since the actual concurrency need here is
+minimal. That does mean genuinely concurrent readers are possible (e.g. a
+frontend polling several jobs' GET /api/jobs/{id} at once): asyncio.to_thread
+dispatches to Python's default thread pool, so two calls can land on two
+different OS threads at the same moment. sqlite3.connect(check_same_thread=
+False) only disables Python's same-thread *check* -- it does not make the
+single shared Connection object itself safe for concurrent use from
+multiple threads at once (confirmed the hard way: concurrent polling from
+a real browser produced `sqlite3.InterfaceError: bad parameter or other API
+misuse`). _run() below serializes every call through one lock so only one
+thread ever touches self._conn at a time; WAL mode is unrelated to this --
+it's about crash-safety/reader-writer isolation at the file level, not
+in-process thread-safety of one Python object.
 """
 
 import asyncio
 import json
 import sqlite3
+import threading
 import time
 from functools import lru_cache
 from typing import Any, Optional
@@ -63,9 +73,14 @@ class JobStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._lock = threading.Lock()
 
     async def _run(self, fn, /, *args: Any) -> Any:
-        return await asyncio.to_thread(fn, *args)
+        def locked_call() -> Any:
+            with self._lock:
+                return fn(*args)
+
+        return await asyncio.to_thread(locked_call)
 
     # ---- jobs ----
 
@@ -133,15 +148,43 @@ class JobStore:
     async def get_job(self, job_id: str) -> Optional[dict[str, Any]]:
         return await self._run(self._get_job_sync, job_id)
 
-    def _list_jobs_sync(self, status_in: list[str]) -> list[dict[str, Any]]:
-        placeholders = ",".join("?" for _ in status_in)
-        rows = self._conn.execute(
-            f"SELECT * FROM jobs WHERE status IN ({placeholders})", tuple(status_in)
-        ).fetchall()
+    def _list_jobs_sync(self, status_in: Optional[list[str]]) -> list[dict[str, Any]]:
+        if status_in:
+            placeholders = ",".join("?" for _ in status_in)
+            rows = self._conn.execute(
+                f"SELECT * FROM jobs WHERE status IN ({placeholders}) ORDER BY created_at DESC",
+                tuple(status_in),
+            ).fetchall()
+        else:
+            rows = self._conn.execute("SELECT * FROM jobs ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
 
-    async def list_jobs(self, status_in: list[str]) -> list[dict[str, Any]]:
+    async def list_jobs(self, status_in: Optional[list[str]] = None) -> list[dict[str, Any]]:
+        """Lists jobs, newest first. `status_in` omitted or empty means no
+        filter -- every job. `backend/core/recovery.py` always passes an
+        explicit filter (only QUEUED/RUNNING/CANCELLING matter at startup);
+        the no-filter path exists for GET /api/jobs (see storyboard.py),
+        which needs full history.
+        """
         return await self._run(self._list_jobs_sync, status_in)
+
+    def _reset_job_for_retry_sync(self, job_id: str, status: str) -> None:
+        self._conn.execute(
+            "UPDATE jobs SET status = ?, error = NULL, result = NULL, "
+            "started_at = NULL, finished_at = NULL WHERE id = ?",
+            (status, job_id),
+        )
+        self._conn.commit()
+
+    async def reset_job_for_retry(self, job_id: str, status: str) -> None:
+        """Explicitly blanks error/result/started_at/finished_at and sets a
+        fresh status -- distinct from update_job_status(), whose COALESCE
+        semantics for those same fields mean passing None can never clear a
+        previously-set value. Used ahead of a /retry re-enqueue so a stale
+        error message or a completed result from the last run doesn't linger
+        on a job about to run again from a clean slate.
+        """
+        await self._run(self._reset_job_for_retry_sync, job_id, status)
 
     # ---- shots ----
 
@@ -191,6 +234,26 @@ class JobStore:
 
     async def get_shots(self, job_id: str) -> list[dict[str, Any]]:
         return await self._run(self._get_shots_sync, job_id)
+
+    def _reset_shots_by_status_sync(self, job_id: str, from_status: str, to_status: str) -> None:
+        self._conn.execute(
+            "UPDATE shots SET status = ?, error = NULL, prompt_id = NULL, "
+            "submitted_at = NULL, finished_at = NULL "
+            "WHERE job_id = ? AND status = ?",
+            (to_status, job_id, from_status),
+        )
+        self._conn.commit()
+
+    async def reset_shots_by_status(self, job_id: str, from_status: str, to_status: str) -> None:
+        """Bulk-transitions every shot row currently at `from_status` to
+        `to_status`, clearing error/prompt_id/submitted_at/finished_at so the
+        reset row looks like a freshly bootstrapped one. Rows at any other
+        status (e.g. SUBMITTED, DONE) are untouched. Used by /retry to reset
+        only genuinely FAILED shots back to PENDING -- SUBMITTED rows
+        deliberately keep going through _run_storyboard_job's existing
+        history-reconcile-or-resubmit branch unmodified.
+        """
+        await self._run(self._reset_shots_by_status_sync, job_id, from_status, to_status)
 
 
 @lru_cache

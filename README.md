@@ -83,6 +83,13 @@ copy .env.example .env
 only need to edit it if you change ports, move output/workflow locations,
 or want different safety limits. See inline comments in `.env.example`.
 
+`requirements.txt` alone is enough to run this backend, its test suite,
+and CI. It does **not** include `torch`/Intel Arc (XPU) support — that's
+only needed if `backend/core/gpu_memory.py` should do real VRAM cleanup in
+this process instead of its no-op fallback (rare; ComfyUI's own process
+does the actual model inference and VRAM management regardless). Add it
+with `pip install -r requirements-gpu.txt` if you need that.
+
 ### 2. ComfyUI (separate clone, separate venv)
 
 ComfyUI is not vendored into this project — clone and set it up on its own.
@@ -129,8 +136,11 @@ python -m venv .venv
 
 ### 3. Add a workflow
 
-Export at least one ComfyUI workflow in **API format** (Settings > Dev Mode
-> Save (API Format)) into `backend/workflows/default_i2v.json`. See
+A verified-working default is already shipped:
+`backend/workflows/default_t2v.json` (SD1.5 + AnimateDiff v3 text-to-video).
+To add another, export a ComfyUI workflow in **API format** (Settings > Dev
+Mode > Save (API Format)) into `backend/workflows/<name>.json` and pass
+`"workflow_name": "<name>"` in the `/api/storyboard` request. See
 `backend/workflows/README.md` for the prompt-node naming convention the
 storyboard route expects. Build the workflow around an fp8 checkpoint/UNet
 loader to stay comfortably under 8GB — the `-Fp8` flag on
@@ -151,6 +161,13 @@ D:\NewProjects\ManyTV\.venv\Scripts\Activate.ps1
 uvicorn backend.app:app --reload --port 8000
 ```
 
+`uvicorn` binds to `127.0.0.1` by default (not `0.0.0.0`) — this is a
+deliberate security boundary, not just a default worth leaving alone: the
+API has no authentication layer (see "CORS and network exposure" below), so
+it relies on nothing but this machine being able to reach the socket at
+all. Don't pass `--host 0.0.0.0` (or otherwise put this behind a
+port-forward/tunnel) without adding real auth first.
+
 Then, e.g.:
 
 ```powershell
@@ -163,9 +180,23 @@ curl http://127.0.0.1:8000/api/jobs/<job_id>   # result.script once status is "d
 # 2. Storyboard + generate video from a script
 curl -X POST http://127.0.0.1:8000/api/storyboard `
   -H "Content-Type: application/json" `
-  -d '{\"script\": \"A lighthouse at dawn.\nWaves crash below.\", \"workflow_name\": \"default_i2v\"}'
+  -d '{\"script\": \"A lighthouse at dawn.\nWaves crash below.\"}'
 curl http://127.0.0.1:8000/api/jobs/<job_id>
 ```
+
+## CORS and network exposure
+
+No authentication exists on any endpoint (see `TODO.md` BUG-3 for the full
+history) — the security boundary is entirely "nothing but this machine can
+reach the socket," enforced by `uvicorn`'s default `127.0.0.1` bind (see
+"Running" above). `CORS_ALLOWED_ORIGINS` (`.env`) is empty by default, so no
+page open in a browser on this machine can make the API honor a
+cross-origin request either — that only matters once a frontend exists;
+set it to that frontend's origin(s) at that point (e.g.
+`http://127.0.0.1:5173` for a local Vite dev server). If this backend is
+ever meant to be reachable from another machine, both of these defaults
+need revisiting alongside adding a real auth layer — don't just widen the
+CORS list or rebind the host in isolation.
 
 ## Endpoints
 
@@ -174,6 +205,9 @@ curl http://127.0.0.1:8000/api/jobs/<job_id>
 | POST   | `/api/generate-script`| Queues a script-generation job on the single-slot worker (`backend/core/llm_client.py`, defaults to local Ollama), returns a `job_id` — see "LLM setup" below |
 | POST   | `/api/storyboard`     | Splits script into shots (or accepts explicit `shots`), queues one ComfyUI job per shot via the single-slot worker, returns a `job_id` |
 | GET    | `/api/jobs/{job_id}`  | Poll job status/result/error — result is `{"script": "..."}` for generate-script jobs, `{"shots": [...]}` for storyboard jobs |
+| POST   | `/api/jobs/{job_id}/retry` | Re-runs a `failed` or `cancelled` job from its last successful shot (only shots not already `done` re-run); 409 if the job never started (nothing to resume) or isn't in a retryable state |
+| POST   | `/api/jobs/{job_id}/cancel` | Cancels a `queued` job immediately, or signals a `running`/`resuming` storyboard job to stop between shots (not mid-generation — see `TODO.md`); a running `generate_script` job can't be cancelled, only a queued one |
+| GET    | `/api/jobs/{job_id}/files/{shot_index}/{filename}` | Downloads a finished shot's output file |
 | GET    | `/health`             | Liveness check |
 
 ## LLM setup (for `/api/generate-script`)
@@ -210,18 +244,35 @@ GPU slot for that long, delaying any storyboard job queued behind it. If
 that trade-off doesn't work for your workflow, pull a smaller non-reasoning
 instruct model and point `LLM_MODEL` at it.
 
+## Frontend
+
+`frontend/` — React + Vite + TypeScript, a minimal job dashboard: submit a
+script/storyboard job, watch a live-polling list of jobs with per-shot
+status, download finished files, retry/cancel from the same view.
+
+```powershell
+cd frontend
+npm install
+npm run dev   # http://127.0.0.1:5173
+```
+
+Requires the backend's `CORS_ALLOWED_ORIGINS` (`.env`) to include the dev
+server's origin — `http://127.0.0.1:5173,http://localhost:5173` covers
+Vite's default port; already set in this repo's own `.env`, add it to
+yours if starting fresh (see `.env.example`).
+
+The dashboard's job list is whatever this browser has submitted
+(`localStorage`), not a full server-side history — there's no list-jobs
+endpoint (deliberately out of scope, see `TODO.md`). `frontend/.env.example`
+documents `VITE_API_BASE_URL` if the backend isn't at the default
+`http://127.0.0.1:8000`.
+
 ## Known gaps / next steps
 
-- Job state is in-memory only (`SingleSlotWorker._jobs`); restarting the
-  backend loses history of past jobs. Fine for single-user local use;
-  swap in SQLite if you need persistence across restarts.
-- ComfyUI itself is installed and verified (Arc A750 detected, server
-  boots, `/system_stats` reachable from ManyTV) but has **no model
-  checkpoint and no workflow JSON yet** — `/api/storyboard` will still fail
-  with a "workflow not found" error until you pick a video model, download
-  its checkpoint into ComfyUI's `models/` folder, build a workflow around
-  it in the ComfyUI UI, and export it as `backend/workflows/default_i2v.json`
-  (see `backend/workflows/README.md`). Model choice wasn't made for you —
-  it's a real tradeoff (quality vs. speed vs. license vs. VRAM headroom on
-  a shared 8GB card) worth deciding deliberately rather than defaulting.
-- No frontend yet — this is the orchestration backend only.
+See `TODO.md` for the full, current, prioritized list (bugs, missing
+features, recommended order) — it's kept up to date every session and is
+the authoritative source; this section is just a short pointer so it can't
+drift out of sync the way it did before. In brief as of this writing: job
+persistence/resume-after-crash, CORS/network-exposure hardening, CI, job
+retry/cancellation, and a first frontend are all done; a list-jobs endpoint
+and extended worker test coverage are the next likely candidates.

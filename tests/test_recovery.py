@@ -17,7 +17,7 @@ from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings
 from backend.core.job_store import JobStore
 from backend.core.recovery import _resubmit_row, _resume_comfyui_jobs, resume_incomplete_jobs
-from backend.core.worker import Job, JobStatus, ShotStatus, SingleSlotWorker
+from backend.core.worker import Job, JobCancelled, JobStatus, ShotStatus, SingleSlotWorker
 
 
 def _store(tmp_path) -> JobStore:
@@ -121,6 +121,106 @@ def test_resume_comfyui_jobs_waits_indefinitely_for_comfyui_before_resubmitting(
 
     assert comfyui_client.health_check.await_count == 3
     worker.resubmit.assert_awaited_once()
+
+
+def test_resume_incomplete_jobs_includes_cancelling_in_query(tmp_path):
+    """A CANCELLING row at startup means a cancel was requested but the
+    backend crashed before the running handler's cooperative check ever
+    noticed -- still an unambiguous stop request, finalized directly rather
+    than ever resubmitted."""
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    worker.resubmit = AsyncMock()
+    comfyui_client = ComfyUIClient(Settings())
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "cancelling", {"shots": []}, created_at=1.0)
+        await resume_incomplete_jobs(worker, store, comfyui_client)
+        return await store.get_job("job-1")
+
+    row = asyncio.run(scenario())
+
+    worker.resubmit.assert_not_called()
+    assert row["status"] == JobStatus.CANCELLED.value
+
+
+def test_cancelling_generate_script_row_at_startup_is_also_finalized(tmp_path):
+    """Defensive/kind-agnostic case -- a running generate_script job can't
+    actually be cancelled via the API today, but the startup reconciliation
+    handles CANCELLING for any kind rather than assuming storyboard-only."""
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    worker.resubmit = AsyncMock()
+    comfyui_client = ComfyUIClient(Settings())
+    comfyui_client.health_check = AsyncMock(side_effect=AssertionError("should not be called"))
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "cancelling", {"prompt": "x"}, created_at=1.0)
+        await resume_incomplete_jobs(worker, store, comfyui_client)
+        return await store.get_job("job-1")
+
+    row = asyncio.run(scenario())
+
+    worker.resubmit.assert_not_called()
+    assert row["status"] == JobStatus.CANCELLED.value
+
+
+def test_resume_comfyui_jobs_skips_resubmit_if_job_cancelled_during_comfyui_wait(tmp_path):
+    """The key regression test for the recovery.py race fix: _resume_comfyui_jobs
+    captures its rows once, then waits (possibly a long time) for ComfyUI's
+    health check. If a /cancel request lands on the job during that wait, the
+    stale captured row must not be used to blindly resubmit and clobber the
+    cancellation back to RESUMING."""
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    worker.resubmit = AsyncMock()
+    comfyui_client = ComfyUIClient(Settings())
+
+    health_check_results = [False, False, True]
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        row = await store.get_job("job-1")
+
+        async def fake_health_check():
+            result = health_check_results.pop(0)
+            if result:
+                # Simulate a concurrent /cancel request landing while this
+                # job was waiting for ComfyUI to come back.
+                await store.update_job_status("job-1", JobStatus.CANCELLED.value, finished_at=99.0)
+            return result
+
+        comfyui_client.health_check = fake_health_check
+        await _resume_comfyui_jobs(worker, store, comfyui_client, [row], poll_interval_seconds=0)
+        return await store.get_job("job-1")
+
+    final_row = asyncio.run(scenario())
+
+    worker.resubmit.assert_not_called()
+    assert final_row["status"] == JobStatus.CANCELLED.value
+
+
+def test_resume_comfyui_jobs_finalizes_cancelling_row_found_at_refetch_time(tmp_path):
+    """Same shape as above, but the row is found CANCELLING (not yet
+    CANCELLED) at re-fetch time -- must still finalize to CANCELLED rather
+    than resubmitting."""
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    worker.resubmit = AsyncMock()
+    comfyui_client = ComfyUIClient(Settings())
+    comfyui_client.health_check = AsyncMock(return_value=True)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        row = await store.get_job("job-1")
+        await store.update_job_status("job-1", JobStatus.CANCELLING.value)
+        await _resume_comfyui_jobs(worker, store, comfyui_client, [row], poll_interval_seconds=0)
+        return await store.get_job("job-1")
+
+    final_row = asyncio.run(scenario())
+
+    worker.resubmit.assert_not_called()
+    assert final_row["status"] == JobStatus.CANCELLED.value
 
 
 # ---- backend/api/routes/storyboard.py: shot-level reconciliation ----
@@ -279,3 +379,66 @@ def test_submitted_shot_with_comfyui_unreachable_propagates_without_resubmitting
         raised = True
 
     assert raised
+
+
+def test_shot_loop_raises_job_cancelled_when_status_is_cancelling(tmp_path, monkeypatch):
+    """The cooperative cancellation check fires before any ComfyUI call is
+    made for the next shot -- a job with shot 0 already DONE and shot 1
+    PENDING, but the job's own row already CANCELLING, must raise
+    JobCancelled without ever touching ComfyUI."""
+    store = _store(tmp_path)
+    _prepare_storyboard_env(monkeypatch, tmp_path, store)
+    monkeypatch.setattr(
+        storyboard_module.comfyui_client, "queue_prompt",
+        AsyncMock(side_effect=AssertionError("must not submit anything once cancelling")),
+    )
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "cancelling", {"shots": []}, created_at=1.0)
+        await store.upsert_shot("job-1", 0, ShotStatus.DONE.value, files=["a.mp4"])
+        await store.upsert_shot("job-1", 1, ShotStatus.PENDING.value)
+        job = _make_job([
+            {"index": 0, "description": "", "prompt": "p", "negative_prompt": ""},
+            {"index": 1, "description": "", "prompt": "p", "negative_prompt": ""},
+        ])
+        await storyboard_module._run_storyboard_job(job)
+
+    try:
+        asyncio.run(scenario())
+        raised = False
+    except JobCancelled:
+        raised = True
+
+    assert raised
+
+
+def test_shot_loop_checks_cancellation_between_every_shot(tmp_path, monkeypatch):
+    """Two PENDING shots; the job gets flipped to CANCELLING (simulating a
+    concurrent /cancel request) right after shot 0 completes. Shot 1 must
+    never be submitted."""
+    store = _store(tmp_path)
+    _prepare_storyboard_env(monkeypatch, tmp_path, store)
+    monkeypatch.setattr(storyboard_module.comfyui_client, "queue_prompt", AsyncMock(return_value="prompt-0"))
+
+    async def fake_wait_for_completion(prompt_id, on_progress=None):
+        await store.update_job_status("job-1", JobStatus.CANCELLING.value)
+        return _fake_history("shot0.mp4")
+
+    monkeypatch.setattr(storyboard_module.comfyui_client, "wait_for_completion", fake_wait_for_completion)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        job = _make_job([
+            {"index": 0, "description": "", "prompt": "p", "negative_prompt": ""},
+            {"index": 1, "description": "", "prompt": "p", "negative_prompt": ""},
+        ])
+        await storyboard_module._run_storyboard_job(job)
+
+    try:
+        asyncio.run(scenario())
+        raised = False
+    except JobCancelled:
+        raised = True
+
+    assert raised
+    storyboard_module.comfyui_client.queue_prompt.assert_awaited_once()

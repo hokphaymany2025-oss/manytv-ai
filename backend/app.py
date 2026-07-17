@@ -49,11 +49,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ManyTV", version="0.1.0", lifespan=lifespan)
 
+# See BUG-3 in TODO.md: this used to be allow_origins=["*"] with no auth on
+# any route, which let any page open in the user's browser hit this API.
+# Fix for this single-machine, no-frontend-yet deployment: an empty
+# allowlist by default (settings.cors_allowed_origins) plus binding uvicorn
+# to 127.0.0.1 (see README "Running") -- nothing but this machine's own
+# tooling can reach the API at all, so no separate auth layer is needed on
+# top of that. Set CORS_ALLOWED_ORIGINS in .env once a real frontend exists.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=get_settings().cors_allowed_origins_list,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 app.include_router(generate_script.router)

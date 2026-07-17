@@ -6,6 +6,115 @@
 
 ## Session Log
 
+### 2026-07-17 ~21:30 — List-jobs endpoint added, live-validated against real multi-session history
+
+**What was completed:** Picked up the prior session's "Exact next task" — verified repo consistency first (git log/status matched what `SESSION_STATE.md` claimed exactly: 5 commits, all of the last two sessions' work still uncommitted; 72/72 tests passing; no stray backend/frontend processes listening), then implemented `GET /api/jobs`.
+
+- **`backend/core/job_store.py`**: `list_jobs(status_in=...)` now defaults to `None`/optional — an omitted or empty filter means "every job, no `WHERE` clause" (existing caller `recovery.py` is unaffected, it always passes an explicit filter). Added `ORDER BY created_at DESC` to both the filtered and unfiltered query paths (newest first) — safe since no existing caller depended on row order.
+- **`backend/api/routes/storyboard.py`**: new `GET /api/jobs` route (`list_jobs_route`), optional `?status=failed,cancelled`-style comma-separated query filter. `_build_job_status_response` (already shared by `get_job_status`/`retry_job`/`cancel_job`) gained an optional pre-fetched `job_row` parameter so the list route builds each response from the row it already has from its own `list_jobs()` call, instead of re-fetching by id per job (avoiding an N+1 query pattern).
+- Tests: `tests/test_job_store.py` (+2 — no-filter-returns-everything, newest-first ordering) and `tests/test_job_routes.py` (+4 — unfiltered list, comma-separated status filter, empty-list case, shots included for storyboard jobs). Full suite: `python -m pytest tests/ -v` → **78 passed** (72 prior + 6 new).
+
+**Live validation:** started a fresh real backend (clean startup, confirmed via `Get-NetTCPConnection` that port 8000 was free first — no repeat of the prior session's silent-stale-process mistake). Submitted two new real jobs, then called the new endpoint against the backend's **actual accumulated multi-session history** (20 real jobs persisted in `output/jobs.db` across this and every prior session's live tests, not synthetic test data): unfiltered `GET /api/jobs` returned all 20, correctly newest-first (the two just-submitted jobs at the top); `GET /api/jobs?status=failed` correctly returned exactly the 6 real jobs that had failed (all for the same real reason — ComfyUI not running). Stopped the test backend cleanly afterward, confirmed port 8000 free again.
+
+**Files changed:** `backend/core/job_store.py`, `backend/api/routes/storyboard.py`, `tests/test_job_store.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- The frontend still doesn't use this new endpoint — it still client-tracks submitted job ids via `localStorage` (from the prior session, before this endpoint existed). Updating it to show real server-side history is the natural next step and now the top open item.
+- CI still never observed running on a real GitHub Actions job (no git remote configured).
+- BUG-5 (cosmetic), `_naive_shot_split`/`_apply_shot_to_workflow` direct tests, and a dependency lockfile are all still open, all low priority.
+- No live services running — the test backend was stopped cleanly at the end of this session.
+
+**Exact next task:** Update `frontend/src/useTrackedJobs.ts` (or add a sibling hook) to call the new `GET /api/jobs` instead of (or in addition to) polling only `localStorage`-tracked ids — would let the dashboard show real job history from any client, not just what this specific browser submitted. Alternatively, push this repo to a GitHub remote to finally confirm CI fires for real — independent, either can go first.
+
+---
+
+### 2026-07-17 ~18:40 — Job retry + cancellation + first frontend milestone, live-validated (found & fixed BUG-6)
+
+**What was completed:** User asked for three things bundled together: retry a `FAILED` job, job cancellation, and starting a frontend. Scope disambiguation took several rounds (the user's "stage 3/4/7" references turned out to map to `TODO.md`'s "Missing features" list, not the "Recommended next steps" roadmap I'd used earlier) — worth remembering that "stage N" isn't inherently anchored to one list in this repo. Given the size (three features, one of them open-ended), used Plan mode: three parallel `Explore` agents read `worker.py`/`job_store.py`, `storyboard.py`/`schemas.py`/`recovery.py`/`app.py`, and confirmed no frontend/Node tooling existed anywhere in the repo; `AskUserQuestion` settled frontend stack (React+Vite+TS), scope (minimal job dashboard), and the job-list-source gap (client-tracked via `localStorage`, no new list-jobs endpoint — deliberately not what "frontend" scope meant this time). A dedicated Plan agent then stress-tested the retry/cancel state-machine design and found two real gaps before any code was written (both incorporated into the plan, see `TODO.md`'s milestone entry for detail): a dequeue-time check that needed to treat `CANCELLING` the same as `CANCELLED` (else silently clobbered back to `RUNNING`), and retry needing to reject a job cancelled while still `QUEUED` (`started_at IS NULL`) to avoid a duplicate queue entry. Full plan: `C:\Users\hokph\.claude\plans\logical-mapping-biscuit.md`.
+
+**Backend implementation:**
+- `backend/core/worker.py`: new `JobStatus.CANCELLING`/`CANCELLED`, new `JobCancelled` exception. `_run()` now checks the persisted row before marking `RUNNING` (skips/finalizes an already-cancelled-or-cancelling job without invoking its handler) and catches `JobCancelled` ahead of the generic `except Exception` to finalize as `CANCELLED` rather than `FAILED`.
+- `backend/core/job_store.py`: new `reset_job_for_retry`/`reset_shots_by_status` methods (explicit blanking of stale `error`/`result`, since `update_job_status`'s COALESCE semantics can't do this). Also gained a `threading.Lock` around `_run()`'s dispatch — see BUG-6 below.
+- `backend/core/recovery.py`: fixed the Plan-agent-caught race in `_resume_comfyui_jobs` (re-fetches each row fresh instead of trusting a snapshot captured before a possibly-indefinite ComfyUI-health wait); `resume_incomplete_jobs`'s startup query now includes `CANCELLING`, finalized to `CANCELLED` rather than resubmitted.
+- `backend/api/routes/storyboard.py`: cooperative cancellation check at the top of every shot-loop iteration (fires even on DONE-skipped ones); new `POST /api/jobs/{id}/retry` and `POST /api/jobs/{id}/cancel` routes; shared `_build_job_status_response` helper factored out of `get_job_status` so all three job routes return identically-shaped responses; new narrow `GET /api/jobs/{id}/files/{shot_index}/{filename}` download route reusing BUG-2's exact `Field(pattern=...)` technique (deliberately not a blanket `StaticFiles` mount, since `output/` also holds `jobs.db`).
+- Tests: `tests/test_worker.py` (new, 9 cases), `tests/test_job_routes.py` (new, 17 cases, including one real `TestClient` call since `Path(..., pattern=...)` validation can't be exercised by calling a route function directly), `tests/test_job_store.py` (+5, including the BUG-6 concurrency regression test), `tests/test_recovery.py` (+6). Full suite: 72 passed.
+
+**Frontend (`frontend/`):** React + Vite + TypeScript, scaffolded via `npm create vite@latest`. Node.js LTS wasn't installed anywhere on this machine — installed via `winget install OpenJS.NodeJS.LTS` with the user's explicit approval first (confirmed `winget` was available before asking, rather than asking blind). Minimal job dashboard: `ScriptForm`/`StoryboardForm` submit jobs, `useTrackedJobs` hook polls each tracked job id (persisted to `localStorage`) every 3s via the existing `GET /api/jobs/{id}`, `JobRow` shows status/shots/error and conditionally renders Retry/Cancel buttons and download links. TypeScript compiles clean, `npm run build` succeeds. `.env`/`.env.example` (both root and `frontend/`) updated so `CORS_ALLOWED_ORIGINS` includes the Vite dev server's origin.
+
+**Live validation, not just tests — and this is what actually mattered this session:**
+- Direct `curl` against a real running backend confirmed: cancelling a `QUEUED` generate_script job (real log line: `"was cancelled before it started running; skipping"`), a storyboard job failing for a real reason (ComfyUI down) then being retried and genuinely re-running (same real failure recurred, proving state was actually reset and re-executed, not faked), cancel-on-terminal-job → 409, download-missing-file → 404, and a real CORS preflight from the frontend's actual origin succeeding.
+- `chromium-cli` (the `run` skill's preferred driver) wasn't available in this environment, so set up a throwaway Playwright install in the scratchpad instead and drove a real headless Chromium against the real dev server + real backend: submitted both job kinds through the actual UI, confirmed the job list live-polls to terminal states, confirmed the Retry button appears on a real `failed` job and clicking it genuinely re-queues it (status flips to `queued` in the UI), confirmed Cancel works on a real queued job, screenshotted throughout (`06-retry-button-visible.png` etc., in the session scratchpad).
+- **This live pass caught a real bug the 71 mocked tests had not** (BUG-6, now in `TODO.md`): the first run showed browser console errors that looked like a CORS misconfiguration (`No 'Access-Control-Allow-Origin' header`). Chased it down via the actual backend log rather than trusting the browser's framing of the error, and found the real cause: `sqlite3.InterfaceError: bad parameter or other API misuse` — `JobStore`'s single `sqlite3.Connection`, used via `asyncio.to_thread` from multiple concurrent requests (exactly what the frontend's polling does, and nothing before this session ever did), was never actually thread-safe despite `check_same_thread=False` (that flag only disables Python's *check*, not real concurrency safety). Fixed with a `threading.Lock` in `JobStore._run()`. Confirmed the fix's regression test reliably reproduces the exact real error 3/3 times when the lock is removed, and passes clean with it restored. Re-ran the full Playwright session against the restarted, fixed backend: zero console errors.
+- One process-management lesson from this session: a "restart the backend" attempt silently failed to take effect once (`pkill` didn't actually kill the old process; the new `uvicorn` hit `Errno 10048` port-in-use and never started, so curl kept hitting the stale process) — caught by checking `Get-NetTCPConnection`/`Get-Process` directly rather than assuming a background command's own "completed" notification meant the new process was live.
+
+**Files changed:** `backend/core/worker.py`, `backend/core/job_store.py`, `backend/core/recovery.py`, `backend/api/routes/storyboard.py`, `tests/test_worker.py` (new), `tests/test_job_routes.py` (new), `tests/test_job_store.py`, `tests/test_recovery.py`, `tests/test_config.py` (one test fixed to use `_env_file=None`, since the real `.env` now legitimately sets `CORS_ALLOWED_ORIGINS` for frontend dev use), `frontend/` (new directory, full Vite+React+TS app), `.env` (local, added `CORS_ALLOWED_ORIGINS`), `.env.example`, `README.md` (new "Frontend" section, updated Endpoints table and "Known gaps" pointer), `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- No list-jobs endpoint — now the single top-priority open item (`JobStore.list_jobs` already implemented internally). The frontend's job list is client-tracked via `localStorage` specifically because this doesn't exist yet.
+- CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — this repo still has no git remote.
+- `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` pure functions still have no dedicated direct tests (low priority — already exercised indirectly).
+- BUG-5 (two redundant `ComfyUIClient` instances, cosmetic) still open.
+- No dependency lockfile.
+- Frontend is a genuine first pass only: no routing, no server-wide job history, cancellation of a `RUNNING` shot only takes effect between shots (no ComfyUI `/interrupt`), a `RUNNING` `generate_script` job can't be cancelled at all.
+- All test/dev processes (backend on :8000, Vite dev server on :5173) were stopped cleanly at the end of this session; confirmed via `Get-NetTCPConnection` that both ports are free.
+
+**Exact next task:** Expose `GET /api/jobs` (or similar) over the already-implemented `JobStore.list_jobs` — small, no live services needed. Would also let the frontend show real job history instead of only browser-local `localStorage` state. Push this repo to a GitHub remote is the other standing item (unblocks confirming CI actually runs).
+
+---
+
+### 2026-07-17 ~17:20 — CI added (GitHub Actions + requirements.txt split)
+
+**What was completed:** Continued from the prior session's "Recommended entry point," which named CI as the next open item. Before implementing, explained current CI requirements, proposed a design, listed files that would change, and named risks (per the user's explicit request), then got approval on the recommended defaults before touching anything.
+
+- **Requirements audit first:** confirmed no `.github/` directory and no git remote exists (`git remote -v` empty) — meaning a workflow file added now has nowhere to actually execute until this repo is pushed to a GitHub-hosted remote. Also found that `requirements.txt` bundled the Intel Arc/XPU `torch`/`torchvision`/`torchaudio` stack, which: (a) nothing in the 35-case test suite imports (confirmed by grep — only `backend/core/gpu_memory.py` touches `torch`, inside a defensive `try/except ImportError`), (b) isn't even installed in the real working dev venv per earlier session notes, and (c) would make CI download a multi-GB, hardware-specific stack for no reason.
+- **`requirements-gpu.txt`** (new): the torch/XPU block, moved out verbatim (with updated comments) from `requirements.txt`. Install with `pip install -r requirements-gpu.txt`, only if real VRAM cleanup in `gpu_memory.py` is wanted instead of its no-op fallback.
+- **`requirements.txt`**: torch block removed, replaced with a one-line pointer to `requirements-gpu.txt`.
+- **`README.md`**: Setup step 1 gained a short note on the split and when `requirements-gpu.txt` is actually needed.
+- **`.github/workflows/ci.yml`** (new): triggers on `push`/`pull_request` to `master` (this repo's actual current branch — there's no `main`), `ubuntu-latest`, Python 3.12 with pip caching, `pip install -r requirements.txt`, `pytest tests/ -v`. Kept deliberately minimal — no coverage/lint/badges — matching what `TODO.md` asked for.
+
+**Live validation (of what could be validated without a remote):** built a completely fresh, throwaway venv (outside the repo, in the session scratchpad) and ran the exact install+test sequence CI will run: `pip install -r requirements.txt` (confirmed no `torch` in the resolved set, ~1m49s, all from PyPI) then `pytest tests/ -v` → **35 passed in 12.5s**, torch entirely absent from that venv. This proves the workflow's steps are correct and self-sufficient. **What this does *not* prove:** that GitHub Actions itself will actually run the workflow — this repo still has no git remote, so the YAML has never executed on a real GitHub-hosted runner. That's an explicit, named gap, not an oversight.
+
+**Files changed:** `.github/workflows/ci.yml` (new), `requirements-gpu.txt` (new), `requirements.txt`, `README.md`, `TODO.md`, `SESSION_STATE.md`. No live services (ComfyUI/backend/Ollama) needed or started.
+
+**Remaining problems / blockers:**
+- **CI has never run for real** — push this repo to a GitHub remote and confirm the workflow actually fires before fully trusting it. This is the most important loose end from this session.
+- BUG-5 (P3) — two redundant `ComfyUIClient` instances (cosmetic). Still open.
+- No list-jobs endpoint — now the top-priority open item once CI is confirmed live (`JobStore.list_jobs` already supports the query internally).
+- Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) still untested directly.
+- Dependency lockfile still doesn't exist — CI installs whatever `requirements.txt`'s unpinned floors resolve to on the day it runs, unchanged by this session's work.
+- No frontend yet.
+
+**Exact next task:** Push this repo to a GitHub remote (or equivalent CI provider) and confirm `.github/workflows/ci.yml` actually runs and passes — that's the one thing this session couldn't validate directly. After that, per `TODO.md` "Recommended next steps" step 7: expose a `GET /api/jobs`-style list endpoint over `JobStore.list_jobs` (already implemented internally, just needs a route) — no live services needed.
+
+---
+
+### 2026-07-17 ~16:43 — BUG-3 CLOSED: CORS allowlist + host-binding hardening
+
+**What was completed:** Continued from the prior session's "Recommended entry point," which named BUG-3 (wildcard CORS + no auth) as the next open item. Before implementing, asked the user (via `AskUserQuestion`) to resolve the open question left unanswered in this file's "Open questions" section — whether the backend needs to be reachable beyond this one machine. Answer: **localhost-only, single user, no LAN/remote access planned.** That confirmed scope: a CORS allowlist + host-binding fix, not a new auth mechanism (a shared-secret header would have been unnecessary work for the confirmed deployment model).
+
+- **`backend/core/config.py`**: new `Settings.cors_allowed_origins` (comma-separated string, env var `CORS_ALLOWED_ORIGINS`, defaults to **empty**) and a `cors_allowed_origins_list` property that splits/strips/drops-empties into a `list[str]`.
+- **`backend/app.py`**: `CORSMiddleware` now uses `settings.cors_allowed_origins_list` instead of `allow_origins=["*"]`; `allow_methods`/`allow_headers` narrowed from `["*"]` to `["GET", "POST"]`/`["Content-Type"]` — the only ones the API actually uses.
+- **Host binding:** confirmed via `uvicorn --help` (installed version) that `uvicorn`'s own default is already `127.0.0.1` — the README's run command never overrode this, so no code change was needed, but README now documents this explicitly as a deliberate security boundary (new "CORS and network exposure" section) rather than an easily-forgotten default.
+- **`.env.example`**: documented `CORS_ALLOWED_ORIGINS` with the empty default and an example for a future local frontend dev server.
+- **README.md**: fixed staleness unrelated to BUG-3 but noticed while touching this file — "Known gaps" still described job state as in-memory-only (false since the Job Manager milestone) and the shipped workflow as missing/named `default_i2v.json` (false; `backend/workflows/default_t2v.json` is the real, shipped, verified-working default). Replaced with a pointer to `TODO.md` as the single source of truth instead of a second copy of status that can drift. Fixed the `default_i2v` → `default_t2v` references in the "Add a workflow" and example-curl sections too.
+
+**Tests:** `tests/test_config.py` (new, 3 cases — empty default, comma-separated parsing, whitespace/empty-entry handling). Full suite: `python -m pytest tests/ -v` → **35 passed** (32 prior + 3 new).
+
+**Live validation (not just unit tests):** built the real `FastAPI` app via `TestClient` and sent an actual cross-origin preflight (`OPTIONS /api/storyboard`, `Origin: http://evil.example`). Pre-fix this would have returned `200` with `Access-Control-Allow-Origin: *`; post-fix it returned `400` with no ACAO header — confirming the browser-side attack vector that made BUG-2 exploitable is now closed. A same-machine, no-`Origin`-header request (`GET /health`) still returned `200` normally, confirming the fix doesn't break legitimate same-machine use.
+
+**Files changed:** `backend/core/config.py`, `backend/app.py`, `.env.example`, `README.md`, `tests/test_config.py` (new), `TODO.md`, `SESSION_STATE.md`. No live services (ComfyUI/backend/Ollama) were needed or started this session — config + route-level work only, as anticipated.
+
+**Remaining problems / blockers:** None. Open items, unchanged in kind from before this session except where noted:
+- BUG-5 (P3) — two redundant `ComfyUIClient` instances (cosmetic). Still open.
+- No CI yet — now the top-priority open item (see `TODO.md` "Recommended next steps" step 6).
+- No list-jobs endpoint (though `JobStore.list_jobs` already supports the query internally).
+- Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) still untested directly.
+- No frontend yet. Note for whenever that starts: its dev origin will need adding to `CORS_ALLOWED_ORIGINS`.
+
+**Exact next task:** Per `TODO.md`'s "Recommended next steps" step 6, add CI (GitHub Actions or equivalent) running `pytest` on push/PR — no live services needed, all 35 cases run against mocks/tmp fixtures. Step 7 (list-jobs endpoint) is a similarly small, independent next choice if CI isn't the priority.
+
+---
+
 ### 2026-07-17 ~13:13 — Job Manager + Queue + Resume System milestone, live-validated
 
 **What was completed:** Designed (via plan mode, approved by the user) and implemented persistent job/shot state, replacing the in-memory-only `SingleSlotWorker._jobs` dict that lost everything on restart. Full design doc: `C:\Users\hokph\.claude\plans\warm-prancing-karp.md`.
@@ -182,15 +291,25 @@ Then proceed to `TODO.md` step 2: fix BUG-2 (sanitize `workflow_name` in `backen
 These weren't answerable from the repository alone:
 
 1. ~~Is the WebSocket keepalive drop (BUG-1) a one-off, or does it reproduce reliably on longer jobs?~~ Still not directly answered (ComfyUI wasn't running to test against), but no longer blocking — the fix implemented this session (poll `/history` as a fallback) is robust to the drop regardless of how often it recurs, since it doesn't depend on knowing the exact trigger. Live validation is still worth doing (see Session Log above) to confirm the fallback actually engages and completes the job, not to diagnose the trigger further.
-2. Is this backend ever expected to be reachable from anywhere other than `127.0.0.1` on this one machine? That answer determines how urgently BUG-3 (wildcard CORS/no auth) needs fixing versus just documenting as "acceptable for the current single-machine, localhost-only deployment." (BUG-2, the path-traversal input itself, is fixed regardless.)
+2. ~~Is this backend ever expected to be reachable from anywhere other than `127.0.0.1` on this one machine?~~ **Answered 2026-07-17 (see `~16:43` Session Log entry): no** — confirmed localhost-only, single-user, no LAN/remote access planned. BUG-3 fixed accordingly (CORS allowlist + host-binding, no new auth layer). Revisit this answer together with the fix if the deployment model ever changes.
 
 ---
 
 ## Recommended entry point for next session
 
-BUG-1 and BUG-4 are both closed; job persistence + resume is live-validated (see the `~13:13` Session Log entry above for full detail — that entry supersedes the "Repo state"/"Open questions" sections below, which are historical snapshots from earlier in this file and no longer current). Current state in brief:
-- 5 commits so far, working tree should be clean after this session's commit (verify with `git log --oneline` / `git status` rather than trusting this file).
-- `output/jobs.db` (SQLite, gitignored) now holds real persisted job history from this session's live tests, including two fully-`done` jobs under `project_id`s `resume-test-1`/`resume-test-2`.
-- No live services running — both ComfyUI and the backend were stopped cleanly at the end of this session.
+BUG-1 through BUG-4 are closed; job persistence + resume, CORS/auth hardening, CI, job retry, job cancellation, a first frontend, and a list-jobs endpoint are all done and live-validated (see the `~21:30` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- Working tree has substantial uncommitted changes across two sessions now — verify fresh with `git log --oneline` / `git status` rather than trusting this file if time has passed.
+- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests (20+ real jobs as of this session).
+- **No live services running** — the test backend started during this session's live verification was stopped cleanly at the end; confirmed via `Get-NetTCPConnection` that port 8000 is free.
+- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only.
+- 78 tests passing (`python -m pytest tests/ -v`).
 
-Pick up BUG-3 (wildcard CORS + no auth, `TODO.md` "Recommended next steps" step 5) — no live services needed, config + route-level work. Adding CI (step 6) is an independent, low-effort parallel option.
+**Exact next task:** Update the frontend (`frontend/src/useTrackedJobs.ts` or a sibling hook) to use the new `GET /api/jobs` endpoint instead of (or alongside) its current `localStorage`-only job tracking — would show real server-side job history from any client. Pushing this repo to a GitHub remote (to finally confirm CI fires for real) is the other standing item, independent either order.
+
+**Commands to resume:**
+```powershell
+cd D:\NewProjects\ManyTV
+git log --oneline -5        # confirm what's actually committed
+git status                  # confirm working tree state
+python -m pytest tests/ -v  # confirm still 78 passed before continuing
+```

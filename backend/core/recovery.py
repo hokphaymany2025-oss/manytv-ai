@@ -19,6 +19,7 @@ however long that takes; GET /health stays 200 the whole time regardless.
 import asyncio
 import json
 import logging
+import time
 
 from backend.core.comfyui_client import ComfyUIClient
 from backend.core.job_store import JobStore
@@ -30,19 +31,37 @@ _COMFYUI_HEALTH_RETRY_SECONDS = 5.0
 
 
 async def resume_incomplete_jobs(worker: SingleSlotWorker, store: JobStore, comfyui_client: ComfyUIClient) -> None:
-    rows = await store.list_jobs(status_in=[JobStatus.QUEUED.value, JobStatus.RUNNING.value])
+    rows = await store.list_jobs(status_in=[
+        JobStatus.QUEUED.value, JobStatus.RUNNING.value, JobStatus.CANCELLING.value,
+    ])
     if not rows:
         return
 
-    logger.info("Found %d incomplete job(s) from a previous run; resuming.", len(rows))
+    # A CANCELLING row here means a cancel was requested but the backend
+    # crashed before the running handler's cooperative check ever noticed --
+    # still a clear, stale request to stop the job, honored directly rather
+    # than ever resubmitting it. Handled kind-agnostically and ahead of the
+    # kind-based split below, even though in practice only a storyboard row
+    # can currently reach CANCELLING (a running generate_script job can't be
+    # cancelled at all -- see cancel_job in storyboard.py).
+    cancelling_rows = [r for r in rows if r["status"] == JobStatus.CANCELLING.value]
+    for row in cancelling_rows:
+        await store.update_job_status(row["id"], JobStatus.CANCELLED.value, finished_at=time.time())
+        logger.info("Job %s was CANCELLING when the backend last stopped; finalized as CANCELLED.", row["id"])
+
+    live_rows = [r for r in rows if r["status"] != JobStatus.CANCELLING.value]
+    if not live_rows:
+        return
+
+    logger.info("Found %d incomplete job(s) from a previous run; resuming.", len(live_rows))
 
     # generate_script has no ComfyUI-style history to reconcile against (an
     # LLM completion isn't resumable/idempotent the way a ComfyUI prompt_id
     # is) -- "resume" for that kind always means "re-run from scratch," and
     # it doesn't need ComfyUI at all, so it can go straight back on the
     # queue without waiting on anything.
-    non_comfyui_rows = [r for r in rows if r["kind"] != "storyboard"]
-    comfyui_rows = [r for r in rows if r["kind"] == "storyboard"]
+    non_comfyui_rows = [r for r in live_rows if r["kind"] != "storyboard"]
+    comfyui_rows = [r for r in live_rows if r["kind"] == "storyboard"]
 
     for row in non_comfyui_rows:
         await _resubmit_row(worker, store, row)
@@ -71,8 +90,20 @@ async def _resume_comfyui_jobs(
             await asyncio.sleep(poll_interval_seconds)
         logger.info("ComfyUI is reachable again; resuming %d storyboard job(s).", len(rows))
 
-    for row in rows:
-        await _resubmit_row(worker, store, row)
+    for stale_row in rows:
+        # `rows` was captured before the (possibly long, possibly
+        # indefinite) health-check wait above -- a /cancel request could
+        # have landed on this job any time during that wait, so re-fetch
+        # immediately before acting on it rather than trusting the snapshot.
+        fresh_row = await store.get_job(stale_row["id"])
+        if fresh_row is None:
+            continue
+        if fresh_row["status"] in (JobStatus.CANCELLED.value, JobStatus.CANCELLING.value):
+            if fresh_row["status"] == JobStatus.CANCELLING.value:
+                await store.update_job_status(fresh_row["id"], JobStatus.CANCELLED.value, finished_at=time.time())
+            logger.info("Job %s was cancelled while waiting for ComfyUI; not resuming.", fresh_row["id"])
+            continue
+        await _resubmit_row(worker, store, fresh_row)
 
 
 async def _resubmit_row(worker: SingleSlotWorker, store: JobStore, row: dict) -> None:

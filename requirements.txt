@@ -14,25 +14,6 @@ openai>=1.50   # OpenAI-compatible client; talks to local Ollama by default
 pytest>=8.0
 
 # ---- Intel Arc (XPU) torch stack ----
-# Strictly speaking, ONLY ComfyUI's own venv needs this to actually
-# generate anything -- inference happens entirely inside the ComfyUI
-# process (see backend/core/comfyui_client.py). It's included here too so
-# backend/core/gpu_memory.py can call torch.xpu.empty_cache() if this
-# process ever touches tensors directly (local thumbnailing, future
-# pre/post-processing). Safe to omit from this venv if you'd rather keep
-# the backend torch-free; gpu_memory.py degrades to a no-op without it.
-#
-# Requires the Intel Arc & Iris Xe Graphics Windows driver to be installed
-# first. As of PyTorch 2.5+, Intel GPU (XPU) support is upstreamed into
-# official PyTorch wheels -- no separate IPEX package needed for basic use.
-# Verify the current index URL/version against pytorch.org before
-# installing; this stack moves fast.
---extra-index-url https://download.pytorch.org/whl/xpu
-torch>=2.5
-torchvision>=0.20
-torchaudio>=2.5
-
-# Optional: only needed if a ComfyUI custom node or op isn't yet upstreamed
-# into stock torch.xpu. Install in ComfyUI's venv (not here) if its console
-# output asks for it.
-# intel-extension-for-pytorch>=2.5
+# Optional -- moved to requirements-gpu.txt. Not needed to run this
+# backend, its test suite, or CI; see that file for what it's for and why
+# it's split out.

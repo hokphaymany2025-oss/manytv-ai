@@ -46,6 +46,13 @@ class JobStatus(str, Enum):
     # gets an honest "known, being worked on, possibly waiting on ComfyUI"
     # signal rather than either of those slightly misleading states.
     RESUMING = "resuming"
+    # A cancel request has been recorded against a RUNNING/RESUMING job but
+    # not yet honored -- the job's own handler notices this cooperatively
+    # (see _run_storyboard_job's per-shot check) and raises JobCancelled,
+    # which finalizes it to CANCELLED below. Purely a signal; nothing reads
+    # it as "the job is stopped" except the transition itself.
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
     DONE = "done"
     FAILED = "failed"
 
@@ -56,6 +63,15 @@ class ShotStatus(str, Enum):
                               # outcome not yet confirmed -- the in-flight state
     DONE = "done"            # history retrieved, files on disk
     FAILED = "failed"        # execution_error, timeout, or download failure
+
+
+class JobCancelled(Exception):
+    """Raised from inside a job handler's cooperative cancellation check
+    (see _run_storyboard_job) once it observes the job's persisted status is
+    CANCELLING. Caught in SingleSlotWorker._run() ahead of the generic
+    except Exception below, so a cancelled job finalizes as CANCELLED rather
+    than being misreported as FAILED.
+    """
 
 
 @dataclass
@@ -128,6 +144,24 @@ class SingleSlotWorker:
     async def _run(self) -> None:
         while True:
             job = await self._queue.get()
+
+            # A job can sit in this queue for a while (behind other work, or
+            # -- for a RESUMING job -- across the indefinite ComfyUI-health
+            # wait in recovery.py) with a cancel request recorded against it
+            # in the meantime. Check the persisted row before touching
+            # anything: without this, the unconditional `status = RUNNING`
+            # write a few lines below would silently clobber a CANCELLING
+            # signal, and the handler would run to completion anyway.
+            row = await self._store.get_job(job.id)
+            if row is not None and row["status"] in (JobStatus.CANCELLED.value, JobStatus.CANCELLING.value):
+                if row["status"] == JobStatus.CANCELLING.value:
+                    await self._store.update_job_status(
+                        job.id, JobStatus.CANCELLED.value, finished_at=time.time(),
+                    )
+                logger.info("Job %s was cancelled before it started running; skipping.", job.id)
+                self._queue.task_done()
+                continue
+
             job.status = JobStatus.RUNNING
             job.started_at = time.time()
             logger.info("Starting job %s (%s).", job.id, job.kind)
@@ -142,6 +176,9 @@ class SingleSlotWorker:
                 logger.info("Job %s completed in %.1fs.", job.id, elapsed)
             except asyncio.CancelledError:
                 raise
+            except JobCancelled:
+                job.status = JobStatus.CANCELLED
+                logger.info("Job %s cancelled.", job.id)
             except Exception as exc:
                 job.status = JobStatus.FAILED
                 job.error = str(exc)

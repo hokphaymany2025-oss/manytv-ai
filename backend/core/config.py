@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     generation_timeout_seconds: int = 600
     max_shots_per_job: int = 50
 
+    # Comma-separated list of origins allowed to make cross-origin browser
+    # requests (CORS). Empty by default: this deployment is a single local
+    # machine with no frontend yet, so there's no legitimate cross-origin
+    # caller to allow, and an empty allowlist means any other page open in
+    # the user's browser (or a wildcard) can't get this API to honor its
+    # preflight -- see BUG-3 in TODO.md for why that mattered in practice.
+    # Once a real frontend exists, set this to its origin(s), e.g.
+    # "http://127.0.0.1:5173,http://localhost:5173" for a local Vite dev server.
+    cors_allowed_origins: str = ""
+
     # OpenAI-compatible chat endpoint for /api/generate-script. Defaults to
     # a local Ollama instance's OpenAI-compat shim; point this at any other
     # OpenAI-compatible provider by changing base_url/api_key/model, no code
@@ -59,6 +69,10 @@ class Settings(BaseSettings):
     @property
     def db_file_path(self) -> Path:
         return Path(self.db_path)
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
 
 @lru_cache
