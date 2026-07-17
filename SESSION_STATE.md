@@ -6,6 +6,32 @@
 
 ## Session Log
 
+### 2026-07-17 ~11:18 — BUG-1 CLOSED: live-validated against a real ComfyUI instance
+
+**Result: PASS.** Ran the full live-validation plan from the previous session's "exact next command." Created `.env` from `.env.example` (didn't exist yet). Started real ComfyUI (`scripts/run_comfyui.ps1`, confirmed Arc A750 / `xpu:0` / `pytorch_version 2.13.0+xpu` via `/system_stats`) and the real ManyTV backend, both as background processes with output redirected to log files for inspection. Ran a clean baseline 3-shot job first (`147c1e4e...`) with no interruption — completed successfully, confirming no regression from the BUG-1 code change.
+
+Then attempted to force a real WebSocket disconnect without stopping ComfyUI. **Windows Firewall block rules were tested first and found to have zero effect** — confirmed empirically (added a real outbound block on port 8188, then successfully curled through it anyway) that Windows exempts loopback (`127.0.0.1`→`127.0.0.1`) traffic from normal firewall filtering for regular desktop processes. Documenting this as the requested limitation, then built a working alternative: a throwaway async TCP proxy (`tcp_proxy.py`, kept in the session scratchpad, **not part of the ManyTV codebase**) inserted between the backend and ComfyUI by temporarily pointing `.env`'s `COMFYUI_PORT` at the proxy and restarting the backend. Killing the proxy process and immediately starting a fresh one on the same port severs the backend's existing WebSocket connection (OS closes the dead proxy's sockets) while leaving ComfyUI's own process completely untouched, and lets subsequent HTTP polling succeed against the new proxy instance — a faithful simulation of "WS drops, ComfyUI and the path to it are still alive."
+
+Submitted job `5cb0ab45-a739-4665-84ce-846cae8bc267`, waited for shot 0 to reach step 18/20, killed+restarted the proxy. Result: the backend logged `"WebSocket to ComfyUI dropped ... falling back to polling"`, polled `/history` three times at ~3.15s intervals (matching the configured 3.0s interval), found the completed entry, downloaded the file, and continued to shot 1 normally. Final job status: `done`, both shots' `.mp4` files present on disk and confirmed as valid (non-empty, real ISO Media/MP4 headers, not placeholders). Confirmed via ComfyUI's own log (`"Starting server"` appears exactly once for the whole session) that ComfyUI's process was never restarted or interrupted at any point.
+
+All four documented failure conditions were checked explicitly and none occurred: prompt state wasn't lost (shot 0's real prompt_id and file were correctly recovered), no infinite retry loop (exactly 3 bounded polls), the job was not incorrectly marked failed (ComfyUI completing and the job completing matched), and `execution_error` handling wasn't disturbed by this change (though that specific guarantee is verified by the existing mocked unit test, not re-observed live, since no real execution error occurred during this session — noted as a scope boundary rather than claimed as directly proven live).
+
+**BUG-1 flipped from MITIGATED to CLOSED in `TODO.md`.**
+
+**Files changed:** none in the application/test source — this was a pure validation session. `TODO.md` and `SESSION_STATE.md` updated with the live evidence. `.env` was temporarily pointed at the test proxy's port and fully reverted to `COMFYUI_PORT=8188` afterward (`.env` is gitignored regardless, so this never touched git). No firewall rules were left behind (added and removed one test rule, confirmed cleanup). All background processes (ComfyUI, backend, proxy) were stopped at the end; verified only unrelated pre-existing processes (a different project, `chinesekhmerdubber_v1`) remained running, untouched.
+
+**Remaining problems** (see `TODO.md` for full detail):
+- BUG-3 (P1) — Wildcard CORS + zero authentication on every endpoint. Still open. (Incidentally, this session's Windows loopback-exemption finding is a mild point *in favor* of the current localhost-only deployment being less exposed than a naive read of BUG-3 might suggest for same-machine threats specifically — though it does nothing to mitigate the actual documented risk, which is any browser tab on this machine making a same-origin-exempt request to the API.)
+- BUG-4 (P2) — Partial storyboard failure silently discards already-succeeded shots' results. Still open, and now the top priority.
+- BUG-5 (P3) — Two redundant `ComfyUIClient` instances (cosmetic). Still open.
+- Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) are still untested.
+- Minor, non-blocking observation from this session: one shot's ComfyUI-side execution took 98s instead of the usual ~25s (mostly before KSampler steps started, i.e. model-reload overhead, not the sampler itself). Not investigated further — didn't cause any failure, just latency variance. Worth keeping in mind if timeouts ever need tightening.
+
+**Exact next command/task:**
+No live services needed for the next step. Pick up BUG-4 (`backend/api/routes/storyboard.py`, `_run_storyboard_job` and `worker.py`'s failure handling) — accumulate shot results as they complete and attach them to `job.result` even on failure, rather than only setting it on full success. Can be implemented and unit-tested without ComfyUI/backend running live.
+
+---
+
 ### 2026-07-17 ~10:53 — Mitigated BUG-1 (WebSocket keepalive drop) — live validation still pending
 
 **What changed today:** Checked whether BUG-1 could be reproduced live first, per the previous session's "exact next command." It couldn't: neither ComfyUI (`127.0.0.1:8188`) nor the ManyTV backend was running (both `curl` checks returned no connection; only Ollama at `11434` was up). Starting ComfyUI to force a real multi-minute GPU generation wasn't something to do unprompted, so instead of blocking on that, implemented the fix the diagnosis already pointed to: `ComfyUIClient.wait_for_completion` (`backend/core/comfyui_client.py`) now catches a dropped WebSocket and falls back to a new `_poll_history_until_done` method, which polls `/history/{prompt_id}` every 3s until ComfyUI records a finished entry, instead of failing the job outright. Rationale: ComfyUI keeps executing a queued prompt regardless of whether the monitoring socket stays connected, so a dropped socket was never actually proof the job failed. A real `execution_error` from ComfyUI (an actual generation failure) still raises immediately and is untouched by this change; a genuinely dead ComfyUI (not just a dropped socket) still fails fast because `get_history` then raises an `httpx` error, not a `ComfyUIError`, which isn't caught by the polling loop's retry. Verified with 4 new mocked unit tests — real behavior against a live ComfyUI instance has **not** been observed yet, since none was running this session.
@@ -119,4 +145,4 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-Run the exact next command/task logged above (start ComfyUI + backend, submit a real multi-shot storyboard job) to live-validate the BUG-1 fix. If that's not practical right now (e.g. no time for a real GPU run), skip straight to BUG-4 per `TODO.md` step 4 — it's independently valuable and doesn't require live services to implement or test.
+BUG-1 is closed. Pick up BUG-4 (`TODO.md` step 4) — no live services needed, can be implemented and unit-tested standalone.
