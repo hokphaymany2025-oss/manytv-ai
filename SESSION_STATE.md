@@ -26,9 +26,10 @@
 - `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` still have no dedicated direct tests (low priority).
 - BUG-5 (cosmetic) and a dependency lockfile still open (low priority).
 - No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
-- **This session's changes are not yet committed.**
 
-**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing item with any real weight on the backlog. Commit this session's status-filter changes first (not yet done, per the user's explicit "do not start the next feature yet" from an earlier session — worth checking whether they want this committed before anything else this time too).
+**Committed:** `b9a9923` — "Add job status filtering to dashboard" (8 files, +157/-20). Working tree clean immediately after.
+
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the only remaining backlog item with any real weight.
 
 ---
 
@@ -352,14 +353,14 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, and a status-filter UI are all done and live-validated (see the `~22:45` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- Commit `ec2243b` (frontend wired to `GET /api/jobs`) is HEAD as of the start of the `~22:45` session. **This session's own changes (status-filter UI) are not yet committed.** Verify fresh with `git log --oneline` / `git status` rather than trusting this file.
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, and a status-filter UI are all done, live-validated, and committed (see the `~22:45` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- Commit `b9a9923` ("Add job status filtering to dashboard") is HEAD. Working tree clean. Verify fresh with `git log --oneline` / `git status` rather than trusting this file if time has passed.
 - `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests (24 jobs as of this session, 6 of them real failures).
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
 - **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. Now the only backlog item with any real weight.
 - Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 10 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Commit this session's status-filter changes (not yet done — the user has asked to commit explicitly each time in prior sessions rather than have it done automatically, worth checking their preference again rather than assuming). Then: push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
 
 **Commands to resume:**
 ```powershell
