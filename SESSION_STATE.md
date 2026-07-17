@@ -23,7 +23,8 @@
 - `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
 - No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
 
-**Committed:** `PENDING` — see commit made immediately after this entry was written; check `git log --oneline -5` for the actual hash rather than trusting this line if time has passed.
+**Committed:**
+53aa165 — Add job timeline with backend timestamps
 
 **Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing item with any real weight on the backlog.
 
