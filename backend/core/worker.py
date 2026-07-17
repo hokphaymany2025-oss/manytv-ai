@@ -12,6 +12,15 @@ serializing ComfyUI jobs against each other: Ollama loads its model onto
 the same discrete GPU as ComfyUI on this hardware (confirmed via
 `ollama ps`), so an LLM call and a video generation running concurrently
 would compete for the same 8GB VRAM budget.
+
+Job/shot state is persisted via backend/core/job_store.py at every
+transition below, so it survives a backend restart -- see
+backend/core/recovery.py for how a previous process's incomplete jobs get
+picked back up at startup. This module stays kind-agnostic and knows
+nothing about ComfyUI, shots, or workflows; persisted state is the source
+of truth for *querying* a job (see GET /api/jobs/{id} in
+backend/api/routes/storyboard.py), so this class only tracks what it needs
+to actually run the queue, not a separate in-memory job index.
 """
 
 import asyncio
@@ -23,6 +32,7 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Optional
 
 from backend.core.gpu_memory import release_gpu_memory
+from backend.core.job_store import JobStore, get_job_store
 
 logger = logging.getLogger("manytv.worker")
 
@@ -30,8 +40,22 @@ logger = logging.getLogger("manytv.worker")
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    # Set the instant a job that was RUNNING when the backend last stopped is
+    # picked back up at startup, before it's confirmed safely re-queued --
+    # see backend/core/recovery.py. Distinct from RUNNING/QUEUED so a poller
+    # gets an honest "known, being worked on, possibly waiting on ComfyUI"
+    # signal rather than either of those slightly misleading states.
+    RESUMING = "resuming"
     DONE = "done"
     FAILED = "failed"
+
+
+class ShotStatus(str, Enum):
+    PENDING = "pending"      # not yet queue_prompt()'d
+    SUBMITTED = "submitted"  # queue_prompt() succeeded, prompt_id recorded,
+                              # outcome not yet confirmed -- the in-flight state
+    DONE = "done"            # history retrieved, files on disk
+    FAILED = "failed"        # execution_error, timeout, or download failure
 
 
 @dataclass
@@ -53,11 +77,11 @@ JobHandler = Callable[[Job], Awaitable[dict[str, Any]]]
 class SingleSlotWorker:
     """FIFO queue with exactly one concurrent worker task."""
 
-    def __init__(self) -> None:
+    def __init__(self, store: Optional[JobStore] = None) -> None:
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
-        self._jobs: dict[str, Job] = {}
         self._handlers: dict[str, JobHandler] = {}
         self._task: Optional[asyncio.Task] = None
+        self._store = store or get_job_store()
 
     def register_handler(self, kind: str, handler: JobHandler) -> None:
         self._handlers[kind] = handler
@@ -76,15 +100,30 @@ class SingleSlotWorker:
                 pass
             self._task = None
 
-    async def submit(self, kind: str, payload: dict[str, Any]) -> Job:
+    async def submit(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        project_id: Optional[str] = None,
+        workflow_name: Optional[str] = None,
+    ) -> Job:
         job = Job(id=str(uuid.uuid4()), kind=kind, payload=payload)
-        self._jobs[job.id] = job
+        await self._store.create_job(
+            job.id, kind, job.status.value, payload,
+            project_id=project_id, workflow_name=workflow_name, created_at=job.created_at,
+        )
         await self._queue.put(job)
         logger.info("Queued job %s (%s); %d job(s) ahead of it.", job.id, kind, self._queue.qsize() - 1)
         return job
 
-    def get_job(self, job_id: str) -> Optional[Job]:
-        return self._jobs.get(job_id)
+    async def resubmit(self, job: Job) -> None:
+        """Re-enqueues a Job reconstructed from a persisted row.
+
+        Used by backend/core/recovery.py at startup -- unlike submit(), the
+        DB row and job id already exist, so this only enqueues.
+        """
+        await self._queue.put(job)
+        logger.info("Resumed job %s (%s); %d job(s) ahead of it.", job.id, job.kind, self._queue.qsize() - 1)
 
     async def _run(self) -> None:
         while True:
@@ -92,6 +131,7 @@ class SingleSlotWorker:
             job.status = JobStatus.RUNNING
             job.started_at = time.time()
             logger.info("Starting job %s (%s).", job.id, job.kind)
+            await self._store.update_job_status(job.id, JobStatus.RUNNING.value, started_at=job.started_at)
             try:
                 handler = self._handlers.get(job.kind)
                 if handler is None:
@@ -108,6 +148,10 @@ class SingleSlotWorker:
                 logger.exception("Job %s failed.", job.id)
             finally:
                 job.finished_at = time.time()
+                await self._store.update_job_status(
+                    job.id, job.status.value, finished_at=job.finished_at,
+                    result=job.result, error=job.error,
+                )
                 release_gpu_memory()
                 self._queue.task_done()
 

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     output_dir: str = "output"
     workflow_dir: str = "backend/workflows"
+    # SQLite file backing persistent job/shot state (backend/core/job_store.py).
+    # Lives under output_dir by default -- that's already this project's one
+    # convention for generated/runtime state that isn't source.
+    db_path: str = "output/jobs.db"
 
     generation_timeout_seconds: int = 600
     max_shots_per_job: int = 50
@@ -51,6 +55,10 @@ class Settings(BaseSettings):
     @property
     def workflow_path(self) -> Path:
         return Path(self.workflow_dir)
+
+    @property
+    def db_file_path(self) -> Path:
+        return Path(self.db_path)
 
 
 @lru_cache

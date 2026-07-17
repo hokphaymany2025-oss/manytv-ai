@@ -48,5 +48,6 @@ async def generate_script(request: ScriptGenerationRequest) -> ScriptGenerationR
             "target_duration_seconds": request.target_duration_seconds,
             "tone": request.tone,
         },
+        project_id=request.project_id,
     )
     return ScriptGenerationResponse(job_id=job.id, status=job.status.value)

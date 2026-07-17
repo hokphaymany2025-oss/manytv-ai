@@ -4,21 +4,34 @@ Splits a script into shots (or accepts an explicit shot list), then queues
 one image-to-video ComfyUI job per shot through the single-slot worker so
 only one generation ever runs at a time on the 8GB A750. Generated files are
 downloaded from ComfyUI and saved under OUTPUT_DIR/<job_id>/shot_NNN/.
+
+Shot state is persisted via backend/core/job_store.py at two points per
+shot (submitted, then done/failed) -- not on every WebSocket progress tick,
+see job_store.py's module docstring for why. _run_storyboard_job() always
+reads its shot list from the store rather than always starting a blank list
+at index 0, which is what makes it double as the resume path: a fresh job
+just has no persisted shots yet (bootstrapped as PENDING here), while a job
+resumed after a backend restart (see backend/core/recovery.py) has some
+shots already DONE/SUBMITTED from before the restart. Same code, no
+separate resume implementation to keep in sync.
 """
 
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 
 from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings, get_settings
-from backend.core.worker import Job, worker
+from backend.core.job_store import get_job_store
+from backend.core.worker import Job, ShotStatus, worker
 from backend.models.schemas import (
     JobStatusResponse,
+    ShotStatusResponse,
     StoryboardRequest,
     StoryboardResponse,
     StoryboardShot,
@@ -89,8 +102,9 @@ async def _save_history_outputs(client: ComfyUIClient, history: dict[str, Any], 
 
 async def _run_storyboard_job(job: Job) -> dict[str, Any]:
     settings = get_settings()
+    store = get_job_store()
     payload = job.payload
-    shots = [StoryboardShot(**s) for s in payload["shots"]]
+    shots_by_index = {s["index"]: StoryboardShot(**s) for s in payload["shots"]}
     workflow_template = _load_workflow(payload["workflow_name"], settings)
 
     if not await comfyui_client.health_check():
@@ -99,32 +113,92 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
             "Start it first with scripts/run_comfyui.ps1."
         )
 
+    shot_rows = await store.get_shots(job.id)
+    if not shot_rows:
+        # Fresh job -- nothing persisted yet, so this *is* the initial state.
+        for index in sorted(shots_by_index):
+            await store.upsert_shot(job.id, index, ShotStatus.PENDING.value)
+        shot_rows = await store.get_shots(job.id)
+
     results = []
-    for shot in shots:
-        workflow = _apply_shot_to_workflow(workflow_template, shot)
-        prompt_id = await comfyui_client.queue_prompt(workflow)
-        logger.info("Job %s: shot %d queued as ComfyUI prompt %s", job.id, shot.index, prompt_id)
+    for shot_row in shot_rows:
+        shot_index = shot_row["shot_index"]
+        shot = shots_by_index[shot_index]
 
-        def _progress(message: dict[str, Any], shot_index: int = shot.index) -> None:
-            if message.get("type") == "progress":
-                data = message["data"]
-                logger.info("Job %s shot %d: step %s/%s", job.id, shot_index, data.get("value"), data.get("max"))
+        if shot_row["status"] == ShotStatus.DONE.value:
+            # Already completed in a prior process -- trust it rather than
+            # re-checking ComfyUI, since a DONE row is only ever written
+            # after its files are confirmed on disk (see job_store.py).
+            files = json.loads(shot_row["files"]) if shot_row["files"] else []
+            results.append({"shot_index": shot_index, "prompt_id": shot_row["prompt_id"], "files": files})
+            continue
 
-        try:
-            history = await asyncio.wait_for(
-                comfyui_client.wait_for_completion(prompt_id, on_progress=_progress),
-                timeout=settings.generation_timeout_seconds,
+        prompt_id: Optional[str] = None
+        history: Optional[dict[str, Any]] = None
+
+        if shot_row["status"] == ShotStatus.SUBMITTED.value and shot_row["prompt_id"]:
+            # Resumed mid-flight: this shot was queued to ComfyUI before the
+            # backend last stopped, but its outcome was never confirmed.
+            # ComfyUI keeps executing independently of this backend's
+            # lifetime (see BUG-1), so check whether it actually finished
+            # before assuming it's lost.
+            try:
+                history = await comfyui_client.get_history(shot_row["prompt_id"])
+                prompt_id = shot_row["prompt_id"]
+                logger.info(
+                    "Job %s shot %d: found existing ComfyUI history for prompt %s, reusing it "
+                    "instead of resubmitting.", job.id, shot_index, prompt_id,
+                )
+            except ComfyUIError:
+                # ComfyUI has no memory of this prompt (it was likely
+                # restarted independently of the backend) -- safe to
+                # resubmit fresh below. Anything other than ComfyUIError
+                # here (e.g. ComfyUI simply unreachable right now) is left
+                # to propagate: resubmitting without knowing the original
+                # prompt's fate could silently produce a different result
+                # than one the caller may already be relying on.
+                logger.info(
+                    "Job %s shot %d: prompt %s has no ComfyUI history; resubmitting.",
+                    job.id, shot_index, shot_row["prompt_id"],
+                )
+
+        if history is None:
+            workflow = _apply_shot_to_workflow(workflow_template, shot)
+            prompt_id = await comfyui_client.queue_prompt(workflow)
+            await store.upsert_shot(
+                job.id, shot_index, ShotStatus.SUBMITTED.value,
+                prompt_id=prompt_id, submitted_at=time.time(),
             )
-        except asyncio.TimeoutError as exc:
-            raise ComfyUIError(
-                f"Shot {shot.index} (prompt {prompt_id}) did not finish within "
-                f"{settings.generation_timeout_seconds}s."
-            ) from exc
+            logger.info("Job %s: shot %d queued as ComfyUI prompt %s", job.id, shot_index, prompt_id)
 
-        shot_dir = settings.output_path / job.id / f"shot_{shot.index:03d}"
+            def _progress(message: dict[str, Any], shot_index: int = shot_index) -> None:
+                if message.get("type") == "progress":
+                    data = message["data"]
+                    logger.info(
+                        "Job %s shot %d: step %s/%s", job.id, shot_index, data.get("value"), data.get("max")
+                    )
+
+            try:
+                history = await asyncio.wait_for(
+                    comfyui_client.wait_for_completion(prompt_id, on_progress=_progress),
+                    timeout=settings.generation_timeout_seconds,
+                )
+            except asyncio.TimeoutError as exc:
+                error_msg = (
+                    f"Shot {shot_index} (prompt {prompt_id}) did not finish within "
+                    f"{settings.generation_timeout_seconds}s."
+                )
+                await store.upsert_shot(job.id, shot_index, ShotStatus.FAILED.value, error=error_msg, finished_at=time.time())
+                raise ComfyUIError(error_msg) from exc
+            except Exception as exc:
+                await store.upsert_shot(job.id, shot_index, ShotStatus.FAILED.value, error=str(exc), finished_at=time.time())
+                raise
+
+        shot_dir = settings.output_path / job.id / f"shot_{shot_index:03d}"
         saved_files = await _save_history_outputs(comfyui_client, history, shot_dir)
-        logger.info("Job %s shot %d done: %d file(s) saved to %s", job.id, shot.index, len(saved_files), shot_dir)
-        results.append({"shot_index": shot.index, "prompt_id": prompt_id, "files": saved_files})
+        await store.upsert_shot(job.id, shot_index, ShotStatus.DONE.value, files=saved_files, finished_at=time.time())
+        logger.info("Job %s shot %d done: %d file(s) saved to %s", job.id, shot_index, len(saved_files), shot_dir)
+        results.append({"shot_index": shot_index, "prompt_id": prompt_id, "files": saved_files})
 
     return {"shots": results}
 
@@ -147,13 +221,56 @@ async def create_storyboard(request: StoryboardRequest) -> StoryboardResponse:
     job = await worker.submit(
         "storyboard",
         {"shots": [s.model_dump() for s in shots], "workflow_name": request.workflow_name},
+        project_id=request.project_id,
+        workflow_name=request.workflow_name,
     )
     return StoryboardResponse(job_id=job.id, status=job.status.value, shot_count=len(shots))
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(job_id: str) -> JobStatusResponse:
-    job = worker.get_job(job_id)
-    if job is None:
+    store = get_job_store()
+    job_row = await store.get_job(job_id)
+    if job_row is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return JobStatusResponse(id=job.id, kind=job.kind, status=job.status.value, result=job.result, error=job.error)
+
+    shots_response: Optional[list[ShotStatusResponse]] = None
+    result: Optional[dict[str, Any]] = None
+
+    if job_row["kind"] == "storyboard":
+        shot_rows = await store.get_shots(job_id)
+        shots_response = [
+            ShotStatusResponse(
+                shot_index=r["shot_index"],
+                status=r["status"],
+                prompt_id=r["prompt_id"],
+                files=json.loads(r["files"]) if r["files"] else None,
+                error=r["error"],
+            )
+            for r in shot_rows
+        ]
+        # Built from shot rows at read time rather than the job's own
+        # `result` column, so this stays a single source of truth and shows
+        # partial progress (BUG-4) even while the job is still RUNNING, not
+        # only once it reaches a terminal state.
+        done_shots = [s for s in shots_response if s.status == ShotStatus.DONE.value]
+        if done_shots:
+            result = {
+                "shots": [
+                    {"shot_index": s.shot_index, "prompt_id": s.prompt_id, "files": s.files or []}
+                    for s in done_shots
+                ]
+            }
+    else:
+        result = json.loads(job_row["result"]) if job_row["result"] else None
+
+    return JobStatusResponse(
+        id=job_row["id"],
+        kind=job_row["kind"],
+        status=job_row["status"],
+        project_id=job_row["project_id"],
+        workflow_name=job_row["workflow_name"],
+        result=result,
+        error=job_row["error"],
+        shots=shots_response,
+    )

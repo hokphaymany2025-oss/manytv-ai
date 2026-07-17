@@ -25,10 +25,14 @@ Generated from a full-repo analysis on 2026-07-17. See `PROJECT_ANALYSIS.md` for
 - [x] Test tooling bootstrapped: `pytest` added to `requirements.txt`, first test module `tests/test_schemas.py` (11 cases covering the BUG-2 fix), all passing.
 - [x] **BUG-1 mitigated** (2026-07-17): `ComfyUIClient.wait_for_completion` now falls back to polling `/history` instead of failing the job outright when the monitoring WebSocket drops. Unit-tested with mocks (`tests/test_comfyui_client.py`, 4 new cases).
 - [x] **BUG-1 CLOSED — live-validated against real ComfyUI** (2026-07-17): forced a real WebSocket drop mid-generation against a live ComfyUI instance (Arc A750, XPU backend) and confirmed the fallback engages and the job still completes. Full evidence in "Bugs" below and `SESSION_STATE.md` Session Log.
+- [x] **Job Manager + Queue + Resume System milestone (2026-07-17).** Job/shot state is now persisted to SQLite (`backend/core/job_store.py`, `output/jobs.db`) and survives a backend restart. A new `backend/core/recovery.py` reconciles incomplete jobs at startup — resubmitting never-started shots, and for shots already submitted to ComfyUI before a crash, checking `/history` first and reusing the result rather than blindly resubmitting (a real ComfyUI workflow isn't guaranteed deterministic, so resubmitting could silently produce a different video than one already relied on). **Live-validated end-to-end**, not just unit-tested: a job was killed mid-shot-1 (backend process only, ComfyUI untouched) and, on restart, correctly found shot 1's existing ComfyUI history and reused it instead of resubmitting, then completed shot 2 normally. Full evidence in `SESSION_STATE.md` Session Log. Design doc: `C:\Users\hokph\.claude\plans\warm-prancing-karp.md`.
+  - This also **closes BUG-4** (partial job failure losing successful-shot results) as a natural side effect — `GET /api/jobs/{id}` now builds its response from the persisted `shots` table at read time, so completed shots are visible even while the job is still `RUNNING`, not only after full success. See BUG-4 below.
+  - `project_id` (free-form, caller-supplied grouping tag, no backing entity) and `workflow_name` are now stored and returned on jobs; `JobStatusResponse` gained a `shots` field with per-shot `status`/`prompt_id`/`files`/`error`.
+  - New test modules: `tests/test_job_store.py` (7 cases — CRUD, partial-update COALESCE semantics, shot upsert merging) and `tests/test_recovery.py` (10 cases — job-level routing, all three shot-reconciliation branches: DONE-skip, PENDING-normal, SUBMITTED×{history-found reuse, history-absent resubmit, ComfyUI-unreachable propagates without resubmitting}). `python -m pytest tests/ -v` → 32 passed.
 
 ## Current tasks [ ]
 
-- [ ] Nothing actively in progress. BUG-1 is closed. Next up per "Recommended next steps": BUG-4 (partial job failure loses successful-shot results) is now the most impactful remaining gap.
+- [ ] Nothing actively in progress. Next up per "Recommended next steps": BUG-3 (wildcard CORS + no auth) is now the most impactful remaining open item.
 
 ---
 
@@ -74,10 +78,11 @@ path = settings.workflow_path / f"{workflow_name}.json"
 `backend/app.py:48-53`: `allow_origins=["*"]`, `allow_methods=["*"]`, `allow_headers=["*"]`, and no auth dependency on any route. Fine as long as this only ever binds to `127.0.0.1` for a single local user (the documented intent) — but there's nothing in the code enforcing that assumption, and it's exactly what turns BUG-2 into something exploitable by any page the user's browser visits, not just a deliberate attacker with network access.
 - **Fix:** at minimum, restrict CORS to explicit known origins once a frontend exists; consider binding uvicorn to `127.0.0.1` explicitly rather than relying on the operator to remember `--host` defaults, and/or a simple shared-secret header if the API will ever be reachable beyond localhost.
 
-### BUG-4 (P2) — Partial job failure loses successful-shot results
+### ~~BUG-4 (P2) — Partial job failure loses successful-shot results~~ — CLOSED 2026-07-17
 
-`backend/api/routes/storyboard.py:90-129`: if shot *N* fails, the whole `_run_storyboard_job` handler raises, `worker.py`'s catch-all sets `job.status = FAILED` and `job.error = str(exc)`, but `job.result` is never populated — so shots 0..N-1 that *succeeded* (and whose files are sitting on disk in `output/<job_id>/shot_000/` etc.) are invisible to anyone polling `/api/jobs/{id}`. This directly happened in the one real run on record (BUG-1's job): shot 0's `.mp4` exists but the job API would report only an error, no indication shot 0 worked.
-- **Fix:** accumulate `results` as shots complete and attach whatever was gathered so far to `job.result` (or a `partial_result`) even on failure, rather than only setting it on full success.
+`backend/api/routes/storyboard.py`: if shot *N* failed, the whole `_run_storyboard_job` handler raised, `worker.py`'s catch-all set `job.status = FAILED` and `job.error = str(exc)`, but `job.result` was never populated — so shots 0..N-1 that *succeeded* (and whose files were sitting on disk in `output/<job_id>/shot_000/` etc.) were invisible to anyone polling `/api/jobs/{id}`. This directly happened in the one real run on record at the time (BUG-1's job): shot 0's `.mp4` existed but the job API reported only an error, no indication shot 0 worked.
+- **Fix applied:** landed as a side effect of the Job Manager + Queue + Resume System milestone rather than as a standalone patch (deliberate sequencing decision — see that milestone's entry above). `GET /api/jobs/{id}` (`backend/api/routes/storyboard.py::get_job_status`) now builds its `result`/`shots` response from the persisted `shots` table at read time, which is populated as shots complete regardless of whether the job later fails — so partial progress is visible immediately, even while the job is still `RUNNING`, not only once it reaches a terminal state.
+- **Verified by:** `tests/test_recovery.py` shot-reconciliation tests exercise the same persisted-shots read path; live-validated as part of the resume test (see Session Log) — a `GET /api/jobs/{id}` mid-job showed shot 0 as `done` while shot 1 was still `submitted`.
 
 ### BUG-5 (P3) — Two independent `ComfyUIClient` instances constructed for no functional reason
 
@@ -87,15 +92,17 @@ path = settings.workflow_path / f"{workflow_name}.json"
 
 ## Missing features
 
-- [ ] **Job persistence.** `SingleSlotWorker._jobs` is a plain in-process dict — restarting the backend loses all job history and in-flight-job state permanently. Explicitly self-documented as a known gap in README.md. (P1)
+- [x] ~~Job persistence.~~ Done 2026-07-17 — see the Job Manager + Queue + Resume System milestone above (`backend/core/job_store.py`, SQLite).
+- [x] ~~Partial-result recovery / resume.~~ Done 2026-07-17, live-validated — same milestone. Note the scope boundary stated there: this covers *process-interruption* recovery (backend killed mid-job); automatic retry-from-last-successful-shot after a *genuine* shot failure (bad prompt, ComfyUI OOM) is still a distinct, unbuilt feature — a `FAILED` job is still terminal and isn't picked up by startup reconciliation.
+- [ ] **Retry a FAILED job from its last successful shot.** Distinct from the resume system above (which only handles process-interruption, not genuine shot failures) — the `shots` table now has all the data this would need, but the retry trigger/logic itself isn't built. (P2)
 - [ ] **Job cancellation.** No way to cancel a queued or running job via the API — a mis-submitted 50-shot job has to run to completion or the whole process has to be killed. (P2)
-- [ ] **Partial-result recovery / resume.** No retry-from-last-successful-shot if a job fails partway. BUG-1's fix removes the most common trigger (a transient WebSocket blip no longer costs the whole job), but a shot that fails for a *real* reason (bad prompt, ComfyUI OOM, genuine crash) still takes down every shot queued after it, and BUG-4 (still open) means the caller can't even see what succeeded first. (P1)
-- [ ] **Automated tests — still mostly missing.** `tests/test_schemas.py` (11 cases) now covers the BUG-2 validation fix, but that's the only module that exists. Still needed: unit tests for `_naive_shot_split`, `_apply_shot_to_workflow`, and the worker's queue/failure semantics; an integration test that mocks the ComfyUI HTTP/WS surface. (P1)
-- [ ] **CI.** No `.github/workflows/` or equivalent — nothing runs automatically on change. Now that `pytest` + a first test module exist, this is cheap to add (`pytest` on push/PR). (P2)
+- [ ] **Structured/queryable job history.** No endpoint to list jobs (only fetch by known ID) — now that persistence exists (`JobStore.list_jobs` already supports filtering by status), this is cheap to expose as a route. (P3)
+- [ ] **Automated tests — still incomplete.** Now covers `schemas.py`, `comfyui_client.py`, `job_store.py`, and the shot-reconciliation branches in `storyboard.py` (32 cases total). Still untested: the worker's queue/failure semantics directly (only exercised indirectly via the recovery tests), and the pure functions `_naive_shot_split`/`_apply_shot_to_workflow` in `storyboard.py`. (P2)
+- [ ] **CI.** No `.github/workflows/` or equivalent — nothing runs automatically on change. Cheap to add now (`pytest` on push/PR, 32 fast tests, no live services needed). (P2)
 - [ ] **Frontend.** Explicitly out of scope so far per README ("No frontend yet — this is the orchestration backend only"). Not a bug, just the obvious next big chunk of work once the backend is hardened. (P2)
-- [ ] **Structured/queryable job history.** Even with persistence, there's currently no endpoint to list jobs (only fetch by known ID) — worth adding once persistence lands. (P3)
 - [ ] **Request size limits.** No length cap on `prompt`/`script` free-text fields. (P3)
 - [ ] **Dependency pinning/lockfile.** `requirements.txt` uses floors only (`>=`); no lockfile, so a fresh install on a new machine isn't guaranteed to reproduce the exact verified environment. (P2)
+- [ ] **`generate_script` resume is always a full re-run.** Documented, permanent asymmetry (an LLM completion has no ComfyUI-`/history`-style idempotency to check) — not a gap to fix, just worth remembering if it's ever surprising in practice. (informational)
 
 ---
 
@@ -104,8 +111,9 @@ path = settings.workflow_path / f"{workflow_name}.json"
 1. ~~`git init` and commit the current working state as-is~~ — done 2026-07-17.
 2. ~~Fix BUG-2 (path traversal in `workflow_name`)~~ — done 2026-07-17.
 3. ~~Fix/mitigate BUG-1 (WebSocket keepalive drop)~~ — implemented, unit-tested, and **live-validated against a real ComfyUI instance 2026-07-17**. Closed.
-4. **Fix BUG-4** — now the most impactful remaining gap: make partial progress visible/recoverable in the job API instead of silently discarded on failure.
-5. **Extend the test suite** (now covering `schemas.py` and `comfyui_client.py` — see `tests/`) to the worker's queue/failure semantics and the pure functions in `storyboard.py` (`_naive_shot_split`, `_apply_shot_to_workflow`) — would have caught the shape of BUG-4 immediately.
-6. **Decide on job persistence** (SQLite is explicitly suggested in the README already) once the above reliability work is done — no point persisting a job model that's about to change shape for partial-result support.
-7. **Revisit CORS/auth (BUG-3)** before any deployment beyond a single trusted local machine.
-8. Only after 1–7: start on the frontend, since the API surface (especially job status/result shape) is likely to shift slightly from BUG-4's fix.
+4. ~~Fix BUG-4 (partial job results) + add job persistence~~ — both landed together 2026-07-17 as the Job Manager + Queue + Resume System milestone, live-validated (real backend-crash-mid-job recovery observed). Closed/done.
+5. **Revisit CORS/auth (BUG-3)** — now the top open item. Before any deployment beyond a single trusted local machine.
+6. **Add CI** running the test suite (32 fast cases, no live services needed) — cheap now that there's real coverage worth protecting.
+7. **Expose a list-jobs endpoint** — `JobStore.list_jobs` already supports it internally (used by `recovery.py`); just needs a route.
+8. **Extend test coverage** to the worker's queue/failure semantics directly and `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow`.
+9. Only after 5–8: start on the frontend — the API surface (job status shape, `project_id`, `shots`) just changed with this session's milestone, so building UI against it now is more stable ground than it was before.

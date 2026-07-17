@@ -6,6 +6,49 @@
 
 ## Session Log
 
+### 2026-07-17 ~13:13 — Job Manager + Queue + Resume System milestone, live-validated
+
+**What was completed:** Designed (via plan mode, approved by the user) and implemented persistent job/shot state, replacing the in-memory-only `SingleSlotWorker._jobs` dict that lost everything on restart. Full design doc: `C:\Users\hokph\.claude\plans\warm-prancing-karp.md`.
+
+- **`backend/core/job_store.py`** (new): `JobStore`, a thin `sqlite3` wrapper (stdlib, no new dependency — every call goes through `asyncio.to_thread`), WAL mode, one connection, schema = `jobs` table (id, kind, status, project_id, workflow_name, payload, result, error, timestamps) + `shots` table (job_id, shot_index, status, prompt_id, files, error, timestamps), `PRIMARY KEY (job_id, shot_index)`. File: `output/jobs.db` (new `Settings.db_path`, documented in `.env.example`).
+- **`backend/core/worker.py`**: `JobStatus` gained `RESUMING`; new `ShotStatus` enum (`PENDING/SUBMITTED/DONE/FAILED`); `SingleSlotWorker` now writes to `JobStore` at its 3 job-level transitions (create/RUNNING/DONE-FAILED) and gained `resubmit()` for re-enqueuing a job reconstructed from a persisted row. Removed the now-dead `_jobs` in-memory dict and `get_job()` accessor — persisted state is the sole source of truth for querying a job now.
+- **`backend/api/routes/storyboard.py`**: `_run_storyboard_job` refactored to read/write shot state from `JobStore` on every invocation (fresh and resumed jobs share the exact same code path — a fresh job just has no persisted shots yet). Three reconciliation branches for a shot found `SUBMITTED` from a prior process: history found on ComfyUI → reuse it, don't resubmit (this workflow isn't guaranteed deterministic — resubmitting could silently produce a different video); history absent (`ComfyUIError`) → safe to resubmit fresh; any other error (ComfyUI unreachable) → propagate, don't guess. `GET /api/jobs/{id}` now reads from `JobStore` and builds `shots`/`result` from persisted shot rows at read time — this is also what closes BUG-4 (partial progress visible mid-`RUNNING`, not just after failure).
+- **`backend/core/recovery.py`** (new): `resume_incomplete_jobs()`, called from `app.py`'s `lifespan` after `worker.start()`. Non-`storyboard` (i.e. `generate_script`) jobs resubmit immediately, no ComfyUI dependency. `storyboard` jobs needing ComfyUI reconciliation are resumed from a background `asyncio.create_task` that polls `health_check()` and waits **indefinitely** (confirmed decision, not a timeout) rather than blocking FastAPI's own startup/readiness — `GET /health` stays 200 regardless of ComfyUI's state.
+- **`backend/models/schemas.py`**: `project_id` (free-form, caller-supplied, no backing `Project` entity — confirmed decision) added to both request kinds; `JobStatusResponse` gained `project_id`, `workflow_name`, `shots: Optional[list[ShotStatusResponse]]`.
+- Decisions confirmed with the user before implementation (via `AskUserQuestion` during planning): `project_id` as free-form tag not a real entity; fold BUG-4 into this milestone rather than patch separately; wait indefinitely for ComfyUI on resume, no auto-fail timeout; stdlib `sqlite3` not `aiosqlite`.
+
+**Tests:** `tests/test_job_store.py` (7 cases) and `tests/test_recovery.py` (10 cases, covering all three shot-reconciliation branches plus recovery's job-level routing) — both new, both passing. Full suite: `python -m pytest tests/ -v` → **32 passed**.
+
+**Live validation (not just mocks) — three real runs against the actual ComfyUI/Arc A750 stack:**
+1. Baseline 3-shot job, no interruption → completed cleanly (no regression).
+2. Restarted the backend against an already-`DONE` job → correctly ignored by recovery (only `QUEUED`/`RUNNING` are picked up), still fully queryable via the API after restart with `project_id`/`workflow_name`/`shots` all intact.
+3. **The real test:** submitted a job, let shot 0 finish and shot 1 reach `SUBMITTED` (a real ComfyUI `prompt_id` in flight), then killed the **backend process only** (`Stop-Process -Force`, ComfyUI untouched) and restarted it ~40s later. Backend log on restart:
+   ```
+   manytv.recovery: Found 1 incomplete job(s) from a previous run; resuming.
+   manytv.recovery: Job bc89fff6... was mid-flight when the backend last stopped; marked RESUMING.
+   manytv.worker: Resumed job bc89fff6...
+   manytv.api.storyboard: Job bc89fff6... shot 1: found existing ComfyUI history for prompt
+     efa56da6..., reusing it instead of resubmitting.
+   manytv.api.storyboard: Job bc89fff6... shot 1 done: 1 file(s) saved to .../shot_001
+   manytv.api.storyboard: Job bc89fff6...: shot 2 queued as ComfyUI prompt 3f30934b...
+   manytv.worker: Job bc89fff6... completed in 26.6s.
+   ```
+   Shot 1 was correctly reconciled (not resubmitted — its ComfyUI history had already finished during the gap) and shot 2 (never reached before the crash) proceeded normally. Final job: `status: done`, all 3 shots `done` with real files on disk, confirmed via `GET /api/jobs/{id}`.
+
+**Note on why the first interruption attempt didn't count:** an earlier attempt at run 3 killed the backend too late — the job had already fully completed by the time the kill command was issued (too much latency between reading a progress log and issuing the next tool call). Documented plainly rather than silently discarded; the retry above is the one that actually exercised the resume path.
+
+**Files changed:** `backend/core/job_store.py` (new), `backend/core/recovery.py` (new), `backend/core/worker.py`, `backend/core/config.py`, `backend/api/routes/storyboard.py`, `backend/api/routes/generate_script.py`, `backend/app.py`, `backend/models/schemas.py`, `.env.example`, `.gitignore` (added `.claude/settings.local.json` — a harness-local permissions file, not project source, that appeared as untracked during this session), `tests/test_job_store.py` (new), `tests/test_recovery.py` (new), `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking — no known bugs introduced. Open items, unchanged in kind from before this session except where noted:
+- BUG-3 (P1) — wildcard CORS + zero authentication on every endpoint. Still open, now the top-priority open item (see TODO.md "Recommended next steps").
+- BUG-5 (P3) — two redundant `ComfyUIClient` instances (cosmetic). Still open.
+- No CI. No list-jobs endpoint (though `JobStore.list_jobs` already supports the query internally). Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) still untested directly. No frontend yet.
+- New, small, explicitly-scoped-out item: retrying a `FAILED` job (genuine shot failure, not process interruption) from its last successful shot is not built — the `shots` table has the data for it, but the trigger/logic doesn't exist. Distinct from this session's resume system, which only covers process-interruption recovery.
+
+**Exact next task:** Per `TODO.md`'s "Recommended next steps," pick up BUG-3 (CORS/auth hardening) — no live services needed to start that work (it's config + route-level, not GPU-dependent). Alternatively, adding CI (running the now-32-case test suite on push) is a quick, independent win that could be done first or in parallel.
+
+---
+
 ### 2026-07-17 ~11:18 — BUG-1 CLOSED: live-validated against a real ComfyUI instance
 
 **Result: PASS.** Ran the full live-validation plan from the previous session's "exact next command." Created `.env` from `.env.example` (didn't exist yet). Started real ComfyUI (`scripts/run_comfyui.ps1`, confirmed Arc A750 / `xpu:0` / `pytorch_version 2.13.0+xpu` via `/system_stats`) and the real ManyTV backend, both as background processes with output redirected to log files for inspection. Ran a clean baseline 3-shot job first (`147c1e4e...`) with no interruption — completed successfully, confirming no regression from the BUG-1 code change.
@@ -145,4 +188,9 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 is closed. Pick up BUG-4 (`TODO.md` step 4) — no live services needed, can be implemented and unit-tested standalone.
+BUG-1 and BUG-4 are both closed; job persistence + resume is live-validated (see the `~13:13` Session Log entry above for full detail — that entry supersedes the "Repo state"/"Open questions" sections below, which are historical snapshots from earlier in this file and no longer current). Current state in brief:
+- 5 commits so far, working tree should be clean after this session's commit (verify with `git log --oneline` / `git status` rather than trusting this file).
+- `output/jobs.db` (SQLite, gitignored) now holds real persisted job history from this session's live tests, including two fully-`done` jobs under `project_id`s `resume-test-1`/`resume-test-2`.
+- No live services running — both ComfyUI and the backend were stopped cleanly at the end of this session.
+
+Pick up BUG-3 (wildcard CORS + no auth, `TODO.md` "Recommended next steps" step 5) — no live services needed, config + route-level work. Adding CI (step 6) is an independent, low-effort parallel option.

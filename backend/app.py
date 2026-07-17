@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.routes import generate_script, storyboard
 from backend.core.comfyui_client import ComfyUIClient
 from backend.core.config import get_settings
+from backend.core.job_store import get_job_store
+from backend.core.recovery import resume_incomplete_jobs
 from backend.core.worker import worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -37,6 +39,8 @@ async def lifespan(app: FastAPI):
             "before submitting a /api/storyboard job.",
             settings.comfyui_http_url,
         )
+
+    await resume_incomplete_jobs(worker, get_job_store(), client)
 
     yield
 
