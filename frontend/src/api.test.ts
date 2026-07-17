@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { listJobs } from './api'
+import { ApiError, getJob, listJobs } from './api'
 import type { JobStatusResponse } from './types'
 
 const sampleJob: JobStatusResponse = {
@@ -56,5 +56,26 @@ describe('listJobs', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(listJobs()).rejects.toThrow('500 Internal Server Error: boom')
+  })
+})
+
+describe('getJob', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('throws an ApiError carrying the response status on a 404', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => '{"detail":"Job not found."}',
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const error = await getJob('does-not-exist').catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(404)
   })
 })

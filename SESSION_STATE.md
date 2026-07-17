@@ -6,6 +6,33 @@
 
 ## Session Log
 
+### 2026-07-17 ~23:15 — Job Detail page added (first real routing in this frontend)
+
+**What was completed:** Continued from the prior session's "Exact next task" (push to GitHub) — but the user again asked to plan the next feature first, this time naming it directly: a Job Detail page. Confirmed HEAD (`d7a7f35`), clean working tree, and both test suites passing (78 backend, 10 frontend) per the user's explicit checklist before analyzing architecture. Re-read the current frontend files fresh (no drift from memory) and found the key fact that shaped the whole plan: `GET /api/jobs/{id}` already returns everything a detail view needs (zero backend changes required), but `JobStatusResponse` has never exposed `created_at`/`started_at`/`finished_at` even though `JobStore` persists them. Used Plan mode with two `AskUserQuestion` forks resolved directly with the user before writing the plan: real URL-based routing (`react-router-dom`) over an in-page toggle with no new dependency, and explicitly deferring timestamps to a later pass rather than bundling a backend change into this one.
+
+- **`frontend/src/api.ts`**: new `ApiError` class (`extends Error`, carries `.status`) — `request()` now throws this instead of a plain `Error`, so callers can check the actual HTTP status instead of string-matching the message. First time this distinction was needed; existing catch sites (`ScriptForm`/`StoryboardForm`/`JobRow`) are unaffected since they only ever read `.message`.
+- **`frontend/src/useJob.ts`** (new): single-job counterpart to `useJobList.ts` — same 3s-poll shape and same "keep last-known state on a transient failure" resilience, plus a `notFound` flag: a confirmed 404 (checked via `ApiError.status`) stops issuing further polls via a ref-guarded early return in `refresh` (a job that doesn't exist can never start existing, since nothing deletes jobs).
+- **Routing shell**: `frontend/src/main.tsx` wraps `<App />` in `<BrowserRouter>`; `frontend/src/App.tsx` stopped being the dashboard itself and became route definitions (`/` and `/jobs/:id`) using the classic `<Routes>/<Route>` API, not the newer data-router/loader API — keeps all data-fetching exactly as it already worked via hooks.
+- **`frontend/src/pages/DashboardPage.tsx`** (new): the old `App.tsx` body, moved verbatim.
+- **`frontend/src/pages/JobDetailPage.tsx`** (new): reads `:id` via `useParams()`, calls `useJob`. Reuses `<JobRow>` directly (wrapped in `<ul className="job-list">` so the bare `<li>` it renders doesn't show a bullet marker outside its usual list context) rather than duplicating JobRow's status/error/script/shots/retry/cancel/download rendering — the detail page's actual value is the real per-job URL, not a different visual treatment of the same data.
+- **`frontend/src/components/JobRow.tsx`**: the job id is now a `<Link to="/jobs/:id">` — the list's entry point into the detail page. Small CSS addition (`text-decoration: none` + `:hover` underline) so it doesn't look like a default blue browser link.
+- Tests: `useJob.test.tsx` (new, 4 cases) and `api.test.ts` (+1, `ApiError.status` on a 404) — `npm run test` → 15 passed (10 prior + 5 new). `npm run build` clean with the new router.
+
+**Live validation:** started a real backend + real Vite dev server, drove it with Playwright. Clicked a real job's id from the dashboard — URL changed to `/jobs/<real-id>`, confirmed via `page.url()`; browser back button returned to `/`; **hard-refreshed while on `/jobs/<id>`** (a direct-navigation, not an in-app click) and confirmed it still rendered the correct job — this was the one risk in the whole plan that depended on tooling behavior rather than app code (Vite's dev server SPA-fallback), now confirmed rather than assumed; navigated directly to a fabricated job id and got "Job not found." instead of an infinite loading state; clicked Retry on a real `failed` job (`732f843d-...`) from the detail page and confirmed its status flipped to `running` — proving the reused `JobRow`/`useJob.updateJob` wiring works correctly standalone, not just inside the list.
+
+**Files changed:** `frontend/package.json`/`package-lock.json` (new `react-router-dom` dependency), `frontend/src/main.tsx`, `frontend/src/App.tsx`, `frontend/src/pages/DashboardPage.tsx` (new), `frontend/src/pages/JobDetailPage.tsx` (new), `frontend/src/useJob.ts` (new), `frontend/src/useJob.test.tsx` (new), `frontend/src/api.ts`, `frontend/src/api.test.ts`, `frontend/src/components/JobRow.tsx`, `frontend/src/App.css`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- CI still never observed running on a real GitHub Actions job — this repo still has no git remote. The only remaining backlog item with any real weight.
+- Job timestamps deferred (new, small backend+frontend item, tracked in `TODO.md`).
+- `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
+- **This session's changes are not yet committed.**
+
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing item with any real weight on the backlog. Commit this session's Job Detail page changes first (not yet done).
+
+---
+
 ### 2026-07-17 ~22:45 — Status-filter UI added to the dashboard
 
 **What was completed:** Continued from the prior session's "Exact next task," which named pushing to GitHub as the standing item — but the user instead asked to "plan the next feature" with a full architecture/design/risk review first. Confirmed HEAD (`ec2243b`) and both test suites passing (78 backend, 7 frontend) per the user's explicit checklist before planning anything. `TODO.md`'s remaining backlog (push to GitHub, two low-priority test items, an optional filter UI) didn't have an obvious single "next feature" — used `AskUserQuestion` to confirm it was the status-filter UI, the only remaining item with real design surface. Used Plan mode (overwriting the previous session's now-completed plan file) to write up context/architecture/design/affected-files/risks/tests before touching any code, per the user's explicit request.
@@ -353,14 +380,14 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, and a status-filter UI are all done, live-validated, and committed (see the `~22:45` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- Commit `b9a9923` ("Add job status filtering to dashboard") is HEAD. Working tree clean. Verify fresh with `git log --oneline` / `git status` rather than trusting this file if time has passed.
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, and a Job Detail page are all done and live-validated (see the `~23:15` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- Commit `d7a7f35` ("Update session state after job filter commit") is HEAD as of the start of the `~23:15` session. **This session's own changes (Job Detail page, `react-router-dom`) are not yet committed.** Verify fresh with `git log --oneline` / `git status` rather than trusting this file if time has passed.
 - `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests (24 jobs as of this session, 6 of them real failures).
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
-- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. Now the only backlog item with any real weight.
-- Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 10 tests passing (`cd frontend && npm run test`).
+- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. The only backlog item with any real weight.
+- Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 15 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
+**Exact next task:** Commit this session's Job Detail page changes (not yet done). Then: push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
 
 **Commands to resume:**
 ```powershell
@@ -368,5 +395,5 @@ cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
 python -m pytest tests/ -v        # confirm still 78 passed
-cd frontend && npm run test       # confirm still 10 passed
+cd frontend && npm run test       # confirm still 15 passed
 ```

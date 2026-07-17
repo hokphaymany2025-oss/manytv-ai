@@ -1,28 +1,14 @@
+import { Route, Routes } from 'react-router-dom'
 import './App.css'
-import { JobList } from './components/JobList'
-import { ScriptForm } from './components/ScriptForm'
-import { StatusFilter } from './components/StatusFilter'
-import { StoryboardForm } from './components/StoryboardForm'
-import { useJobList } from './useJobList'
+import { DashboardPage } from './pages/DashboardPage'
+import { JobDetailPage } from './pages/JobDetailPage'
 
 function App() {
-  const { jobs, refresh, updateJob, status, setStatus } = useJobList()
-
   return (
-    <div className="app">
-      <h1>ManyTV</h1>
-
-      <div className="forms">
-        <ScriptForm onSubmitted={refresh} />
-        <StoryboardForm onSubmitted={refresh} />
-      </div>
-
-      <div className="jobs-header">
-        <h2>Jobs</h2>
-        <StatusFilter value={status} onChange={setStatus} />
-      </div>
-      <JobList jobs={jobs} onJobChanged={updateJob} filtered={status !== ''} />
-    </div>
+    <Routes>
+      <Route path="/" element={<DashboardPage />} />
+      <Route path="/jobs/:id" element={<JobDetailPage />} />
+    </Routes>
   )
 }
 

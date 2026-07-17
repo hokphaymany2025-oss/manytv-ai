@@ -8,6 +8,19 @@ import type {
 
 const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
 
+// Carries the HTTP status so callers can distinguish e.g. "job genuinely
+// doesn't exist" (404) from a transient failure, rather than string-matching
+// the message -- first needed by useJob's not-found handling.
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -15,7 +28,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const body = await response.text()
-    throw new Error(`${response.status} ${response.statusText}: ${body}`)
+    throw new ApiError(response.status, `${response.status} ${response.statusText}: ${body}`)
   }
   return response.json() as Promise<T>
 }

@@ -112,6 +112,11 @@
 .job-row__id {
   font-size: 13px;
   color: var(--text);
+  text-decoration: none;
+}
+
+.job-row__id:hover {
+  text-decoration: underline;
 }
 
 .job-row__status {

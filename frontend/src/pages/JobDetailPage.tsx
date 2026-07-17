@@ -1,0 +1,25 @@
+import { Link, useParams } from 'react-router-dom'
+import { JobRow } from '../components/JobRow'
+import { useJob } from '../useJob'
+
+export function JobDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  const { job, notFound, updateJob } = useJob(id ?? '')
+
+  return (
+    <div className="app">
+      <p>
+        <Link to="/">← Back to dashboard</Link>
+      </p>
+      <h1>Job Detail</h1>
+
+      {notFound && <p>Job not found.</p>}
+      {!notFound && job === null && <p>Loading…</p>}
+      {!notFound && job !== null && (
+        <ul className="job-list">
+          <JobRow job={job} onChanged={updateJob} />
+        </ul>
+      )}
+    </div>
+  )
+}

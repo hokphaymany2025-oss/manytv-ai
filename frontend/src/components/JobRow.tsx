@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { cancelJob, downloadUrl, retryJob } from '../api'
 import type { JobStatusResponse } from '../types'
 
@@ -44,7 +45,9 @@ export function JobRow({ job, onChanged }: Props) {
     <li className="job-row">
       <div className="job-row__header">
         <span className="job-row__kind">{job.kind}</span>
-        <code className="job-row__id">{job.id}</code>
+        <Link to={`/jobs/${job.id}`} className="job-row__id">
+          <code>{job.id}</code>
+        </Link>
         <span className={`job-row__status job-row__status--${job.status}`}>{job.status}</span>
         <div className="job-row__actions">
           {CANCELLABLE_STATUSES.has(job.status) && (
