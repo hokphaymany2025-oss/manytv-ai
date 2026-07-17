@@ -11,6 +11,9 @@ const sampleJob: JobStatusResponse = {
   result: null,
   error: null,
   shots: null,
+  created_at: 1.0,
+  started_at: 2.0,
+  finished_at: 3.0,
 }
 
 describe('listJobs', () => {

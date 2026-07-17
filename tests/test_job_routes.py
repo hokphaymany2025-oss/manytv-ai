@@ -250,6 +250,44 @@ def test_retry_and_cancel_response_shape_matches_get_job_status(tmp_path, monkey
     assert via_get.id == via_cancel.id == "job-1"
 
 
+# ---- timestamps ----
+
+
+def test_get_job_status_includes_job_level_timestamps(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "queued", {"prompt": "x"}, created_at=1.0)
+        await store.update_job_status("job-1", "running", started_at=2.0)
+        await store.update_job_status("job-1", "done", finished_at=3.0)
+        return await storyboard_module.get_job_status("job-1")
+
+    response = asyncio.run(scenario())
+
+    assert response.created_at == 1.0
+    assert response.started_at == 2.0
+    assert response.finished_at == 3.0
+
+
+def test_get_job_status_includes_shot_level_timestamps(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        await store.upsert_shot("job-1", 0, ShotStatus.SUBMITTED.value, prompt_id="p1", submitted_at=2.0)
+        await store.upsert_shot("job-1", 0, ShotStatus.DONE.value, prompt_id="p1", files=["a.mp4"], finished_at=3.0)
+        return await storyboard_module.get_job_status("job-1")
+
+    response = asyncio.run(scenario())
+
+    shot = response.shots[0]
+    assert shot.created_at is not None
+    assert shot.submitted_at == 2.0
+    assert shot.finished_at == 3.0
+
+
 # ---- list_jobs_route ----
 
 

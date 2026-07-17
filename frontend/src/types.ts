@@ -31,6 +31,9 @@ export interface ShotStatusResponse {
   prompt_id: string | null
   files: string[] | null
   error: string | null
+  created_at: number | null
+  submitted_at: number | null
+  finished_at: number | null
 }
 
 export interface JobStatusResponse {
@@ -42,4 +45,7 @@ export interface JobStatusResponse {
   result: Record<string, unknown> | null
   error: string | null
   shots: ShotStatusResponse[] | null
+  created_at: number | null
+  started_at: number | null
+  finished_at: number | null
 }

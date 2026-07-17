@@ -1,10 +1,33 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-17. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 ~06:10 — Job Timeline added (backend timestamps exposed + frontend display)
+
+**What was completed:** Continued from the prior session's Job Detail page milestone, which had explicitly deferred timestamps. Confirmed HEAD (`b113d7f`), clean working tree, and both test suites passing (78 backend, 15 frontend) before planning. Used Plan mode with two `AskUserQuestion` forks resolved directly with the user before writing the plan: **current-attempt lifecycle only** (not a new append-only retry/cancel history table — out of scope, named explicitly as a risk) and **no new date library** (a small local `formatTime.ts`, native `Date`/`Intl` only). Re-reading `job_store.py` and `storyboard.py::_build_job_status_response` in full confirmed this was a pure exposure gap: every timestamp was already persisted and already read into the row dicts, just never copied into the response models — so **zero additional backend data was required**.
+
+- **Backend:** `backend/models/schemas.py` — `JobStatusResponse` gained `created_at`/`started_at`/`finished_at`, `ShotStatusResponse` gained `created_at`/`submitted_at`/`finished_at`. `backend/api/routes/storyboard.py::_build_job_status_response` (shared by all four job routes) now passes them through. Tests: `tests/test_job_routes.py` +2 (job-level and shot-level round-trip through `get_job_status`) — `python -m pytest tests/ -v` → 80 passed.
+- **Frontend:** new `frontend/src/formatTime.ts` (`formatAbsolute`/`formatRelative`) and `frontend/src/components/JobTimeline.tsx` (pure `buildTimelineEvents(job)`, tested in isolation, plus the rendering component). Rendered on `JobDetailPage.tsx` below the existing `<JobRow>`. `types.ts` mirrors the six new fields; updated three existing test fixtures (`api.test.ts`, `useJob.test.tsx`, `useJobList.test.tsx`) since the new fields are non-optional on the TS interface. Tests: `formatTime.test.ts` (6) + `JobTimeline.test.ts` (6, including a chronological-interleaving case with mixed job/shot timestamps) — `npm run test` → 27 passed (15 prior + 12 new). `npm run build` clean.
+
+**Live validation:** started a real backend + real Vite dev server, drove both with Playwright. Submitted a `generate_script` job: timeline showed only "Job created" while queued, then correctly added "Job started" and "Job done" with sensible absolute/relative timestamps once it finished. Submitted a `storyboard` job with ComfyUI intentionally not running: timeline showed "Job created → Job started → Job failed", the real "ComfyUI is not reachable..." error surfaced on the row, and the Retry button was present and correctly enabled. Zero console errors in both runs (screenshots in the session scratchpad). Per-shot submitted/finished interleaving with a *real* ComfyUI run wasn't exercised live, since ComfyUI wasn't running this session — that path is covered instead by the backend round-trip test and `JobTimeline.test.ts`'s interleaving case (explicitly noted as a scope boundary, not silently skipped).
+
+**Files changed:** `backend/models/schemas.py`, `backend/api/routes/storyboard.py`, `tests/test_job_routes.py`, `frontend/src/types.ts`, `frontend/src/formatTime.ts` (new), `frontend/src/formatTime.test.ts` (new), `frontend/src/components/JobTimeline.tsx` (new), `frontend/src/components/JobTimeline.test.ts` (new), `frontend/src/pages/JobDetailPage.tsx`, `frontend/src/App.css`, `frontend/src/api.test.ts`, `frontend/src/useJob.test.tsx`, `frontend/src/useJobList.test.tsx`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- CI still never observed running on a real GitHub Actions job — this repo still has no git remote. The only remaining backlog item with any real weight.
+- Retry/cancel attempt history isn't shown anywhere (new, named explicitly as a Job Timeline scope limit, tracked in `TODO.md`'s "Missing features").
+- `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
+
+**Committed:** `PENDING` — see commit made immediately after this entry was written; check `git log --oneline -5` for the actual hash rather than trusting this line if time has passed.
+
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing item with any real weight on the backlog.
+
+---
 
 ### 2026-07-17 ~23:15 — Job Detail page added (first real routing in this frontend)
 
@@ -380,20 +403,20 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, and a Job Detail page are all done and live-validated (see the `~23:15` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- Commit `d7a7f35` ("Update session state after job filter commit") is HEAD as of the start of the `~23:15` session. **This session's own changes (Job Detail page, `react-router-dom`) are not yet committed.** Verify fresh with `git log --oneline` / `git status` rather than trusting this file if time has passed.
-- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests (24 jobs as of this session, 6 of them real failures).
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, and a Job Timeline are all done and live-validated (see the `2026-07-18 ~06:10` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- See `git log --oneline -5` for the actual current HEAD — this session committed the Job Timeline feature immediately after writing its Session Log entry above.
+- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests.
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
 - **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. The only backlog item with any real weight.
-- Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 15 tests passing (`cd frontend && npm run test`).
+- Backend: 80 tests passing (`python -m pytest tests/ -v`). Frontend: 27 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Commit this session's Job Detail page changes (not yet done). Then: push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
 
 **Commands to resume:**
 ```powershell
 cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
-python -m pytest tests/ -v        # confirm still 78 passed
-cd frontend && npm run test       # confirm still 15 passed
+python -m pytest tests/ -v        # confirm still 80 passed
+cd frontend && npm run test       # confirm still 27 passed
 ```

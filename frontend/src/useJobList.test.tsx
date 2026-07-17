@@ -18,6 +18,9 @@ const jobA: JobStatusResponse = {
   result: null,
   error: null,
   shots: null,
+  created_at: 1.0,
+  started_at: null,
+  finished_at: null,
 }
 
 const jobADone: JobStatusResponse = { ...jobA, status: 'done', result: { script: 'hi' } }
@@ -31,6 +34,9 @@ const jobB: JobStatusResponse = {
   result: null,
   error: 'boom',
   shots: [],
+  created_at: 1.0,
+  started_at: 1.5,
+  finished_at: 2.0,
 }
 
 beforeEach(() => {

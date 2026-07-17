@@ -20,6 +20,9 @@ const jobA: JobStatusResponse = {
   result: null,
   error: null,
   shots: null,
+  created_at: 1.0,
+  started_at: null,
+  finished_at: null,
 }
 
 const jobADone: JobStatusResponse = { ...jobA, status: 'done', result: { script: 'hi' } }

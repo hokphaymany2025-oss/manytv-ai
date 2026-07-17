@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { JobRow } from '../components/JobRow'
+import { JobTimeline } from '../components/JobTimeline'
 import { useJob } from '../useJob'
 
 export function JobDetailPage() {
@@ -16,9 +17,13 @@ export function JobDetailPage() {
       {notFound && <p>Job not found.</p>}
       {!notFound && job === null && <p>Loading…</p>}
       {!notFound && job !== null && (
-        <ul className="job-list">
-          <JobRow job={job} onChanged={updateJob} />
-        </ul>
+        <>
+          <ul className="job-list">
+            <JobRow job={job} onChanged={updateJob} />
+          </ul>
+          <h2>Timeline</h2>
+          <JobTimeline job={job} />
+        </>
       )}
     </div>
   )

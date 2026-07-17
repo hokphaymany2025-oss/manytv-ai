@@ -269,6 +269,9 @@ async def _build_job_status_response(
                 prompt_id=r["prompt_id"],
                 files=json.loads(r["files"]) if r["files"] else None,
                 error=r["error"],
+                created_at=r["created_at"],
+                submitted_at=r["submitted_at"],
+                finished_at=r["finished_at"],
             )
             for r in shot_rows
         ]
@@ -296,6 +299,9 @@ async def _build_job_status_response(
         result=result,
         error=job_row["error"],
         shots=shots_response,
+        created_at=job_row["created_at"],
+        started_at=job_row["started_at"],
+        finished_at=job_row["finished_at"],
     )
 
 

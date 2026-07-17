@@ -64,6 +64,9 @@ class ShotStatusResponse(BaseModel):
     prompt_id: Optional[str] = None
     files: Optional[list[str]] = None
     error: Optional[str] = None
+    created_at: Optional[float] = None
+    submitted_at: Optional[float] = None
+    finished_at: Optional[float] = None
 
 
 class JobStatusResponse(BaseModel):
@@ -80,3 +83,6 @@ class JobStatusResponse(BaseModel):
         "populated even while the job is still running, so partial progress is visible "
         "before the job reaches a terminal state. Always null for generate_script jobs.",
     )
+    created_at: Optional[float] = None
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
