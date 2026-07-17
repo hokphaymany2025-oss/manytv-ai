@@ -6,6 +6,32 @@
 
 ## Session Log
 
+### 2026-07-17 ~22:45 — Status-filter UI added to the dashboard
+
+**What was completed:** Continued from the prior session's "Exact next task," which named pushing to GitHub as the standing item — but the user instead asked to "plan the next feature" with a full architecture/design/risk review first. Confirmed HEAD (`ec2243b`) and both test suites passing (78 backend, 7 frontend) per the user's explicit checklist before planning anything. `TODO.md`'s remaining backlog (push to GitHub, two low-priority test items, an optional filter UI) didn't have an obvious single "next feature" — used `AskUserQuestion` to confirm it was the status-filter UI, the only remaining item with real design surface. Used Plan mode (overwriting the previous session's now-completed plan file) to write up context/architecture/design/affected-files/risks/tests before touching any code, per the user's explicit request.
+
+- **`frontend/src/useJobList.ts`**: added `status`/`setStatus` state. `refresh` (a `useCallback`) now depends on `[status]` and calls `listJobs(status || undefined)` — since the existing mount/interval `useEffect` already depends on `refresh`'s identity, a filter change automatically triggers an immediate re-fetch with the new filter and a fresh interval continuing to poll with it. No other wiring needed.
+- **`frontend/src/components/StatusFilter.tsx`** (new): a `<select>` with "All" plus the 7 known job statuses (`queued`/`running`/`resuming`/`cancelling`/`cancelled`/`done`/`failed`) as a local array, matching `JobRow.tsx`'s existing convention of small local status lists rather than a shared enum module.
+- **`frontend/src/App.tsx`**: renders the new control next to the "Jobs" heading, wired to the hook's `status`/`setStatus`.
+- **`frontend/src/components/JobList.tsx`**: fixed a stale UX string noticed while touching this file — the empty-state message still read "No jobs submitted from this browser yet." (a leftover from the deleted `localStorage`-tracking design, factually wrong since job history became server-side two sessions ago). Now shows "No jobs match this filter." vs. "No jobs yet." depending on whether a filter is active, via a new `filtered` prop.
+- **`frontend/src/App.css`**: small additions (`.jobs-header`, `.status-filter`) reusing existing input styling conventions, no new patterns invented.
+- Tests: `frontend/src/useJobList.test.tsx` +3 cases (`setStatus` triggers an immediate re-fetch with the right query arg, switching back to `''` re-fetches with no filter, the poll interval keeps using whatever filter is currently active after a change, verified with the same fake-timer pattern the existing interval test already used). `npm run test` → 10 passed (7 prior + 3 new). `npm run build` still compiles clean.
+
+**Live validation:** started a real backend + real Vite dev server, confirmed via direct `curl` that the backend's actual accumulated history was 24 jobs total with 6 real `failed` ones (ComfyUI-unreachable failures from many past live-test sessions). Drove the real UI with Playwright: unfiltered dashboard showed all 24; selecting "Failed" in the live dropdown correctly narrowed the list to exactly 6, every visible row read `failed`; switching back to "All" restored all 24. Separately selected a status with zero real matches (`resuming`) and confirmed the new "No jobs match this filter." copy renders correctly. Zero console errors throughout both checks.
+
+**Files changed:** `frontend/src/useJobList.ts`, `frontend/src/components/StatusFilter.tsx` (new), `frontend/src/App.tsx`, `frontend/src/components/JobList.tsx`, `frontend/src/App.css`, `frontend/src/useJobList.test.tsx`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- CI still never observed running on a real GitHub Actions job — this repo still has no git remote. Now the only remaining backlog item with any real weight.
+- `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` still have no dedicated direct tests (low priority).
+- BUG-5 (cosmetic) and a dependency lockfile still open (low priority).
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
+- **This session's changes are not yet committed.**
+
+**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing item with any real weight on the backlog. Commit this session's status-filter changes first (not yet done, per the user's explicit "do not start the next feature yet" from an earlier session — worth checking whether they want this committed before anything else this time too).
+
+---
+
 ### 2026-07-17 ~22:15 — Frontend wired to GET /api/jobs; first automated frontend tests
 
 **What was completed:** User asked for the two prior sessions' work to be committed first (done — see the commit note at the end of this entry), then asked for the next feature. Left as `<TBD>` in their milestone-status message, so confirmed via `AskUserQuestion`: wiring the frontend to the new `GET /api/jobs` endpoint (top of `TODO.md`'s backlog) over the other option (pushing to a GitHub remote). User's message also explicitly asked for "Review architecture / Add feature plan / Define tests" before starting, so used Plan mode (overwriting the previous session's now-unrelated plan file) rather than just diving in.
@@ -326,14 +352,14 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, and the frontend using that endpoint are all done and live-validated (see the `~22:15` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- Two commits landed at the start of the `~22:15` session (`f8cc8e1` frontend, `b7e6a05` backend hardening) covering everything through the list-jobs-endpoint session. **This session's own changes (frontend wired to GET /api/jobs + its first test suite) are not yet committed.** Verify fresh with `git log --oneline` / `git status` rather than trusting this file.
-- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests.
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, and a status-filter UI are all done and live-validated (see the `~22:45` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- Commit `ec2243b` (frontend wired to `GET /api/jobs`) is HEAD as of the start of the `~22:45` session. **This session's own changes (status-filter UI) are not yet committed.** Verify fresh with `git log --oneline` / `git status` rather than trusting this file.
+- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests (24 jobs as of this session, 6 of them real failures).
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
-- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. Now the single top open item.
-- Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 7 tests passing (`cd frontend && npm run test`), first automated frontend suite.
+- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. Now the only backlog item with any real weight.
+- Backend: 78 tests passing (`python -m pytest tests/ -v`). Frontend: 10 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and now the only thing left on the main backlog. Commit the current session's frontend changes first (not yet done).
+**Exact next task:** Commit this session's status-filter changes (not yet done — the user has asked to commit explicitly each time in prior sessions rather than have it done automatically, worth checking their preference again rather than assuming). Then: push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
 
 **Commands to resume:**
 ```powershell
@@ -341,5 +367,5 @@ cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
 python -m pytest tests/ -v        # confirm still 78 passed
-cd frontend && npm run test       # confirm still 7 passed
+cd frontend && npm run test       # confirm still 10 passed
 ```

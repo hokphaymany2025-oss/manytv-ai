@@ -1,11 +1,12 @@
 import './App.css'
 import { JobList } from './components/JobList'
 import { ScriptForm } from './components/ScriptForm'
+import { StatusFilter } from './components/StatusFilter'
 import { StoryboardForm } from './components/StoryboardForm'
 import { useJobList } from './useJobList'
 
 function App() {
-  const { jobs, refresh, updateJob } = useJobList()
+  const { jobs, refresh, updateJob, status, setStatus } = useJobList()
 
   return (
     <div className="app">
@@ -16,8 +17,11 @@ function App() {
         <StoryboardForm onSubmitted={refresh} />
       </div>
 
-      <h2>Jobs</h2>
-      <JobList jobs={jobs} onJobChanged={updateJob} />
+      <div className="jobs-header">
+        <h2>Jobs</h2>
+        <StatusFilter value={status} onChange={setStatus} />
+      </div>
+      <JobList jobs={jobs} onJobChanged={updateJob} filtered={status !== ''} />
     </div>
   )
 }

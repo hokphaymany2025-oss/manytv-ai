@@ -6,15 +6,16 @@ const POLL_INTERVAL_MS = 3000
 
 export function useJobList() {
   const [jobs, setJobs] = useState<JobStatusResponse[]>([])
+  const [status, setStatus] = useState('')
 
   const refresh = useCallback(async () => {
     try {
-      setJobs(await listJobs())
+      setJobs(await listJobs(status || undefined))
     } catch {
       // Backend unreachable/transient -- leave the last-known list in
       // place rather than clearing it.
     }
-  }, [])
+  }, [status])
 
   useEffect(() => {
     void refresh()
@@ -32,5 +33,5 @@ export function useJobList() {
     })
   }, [])
 
-  return { jobs, refresh, updateJob }
+  return { jobs, refresh, updateJob, status, setStatus }
 }

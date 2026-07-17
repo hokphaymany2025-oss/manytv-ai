@@ -104,4 +104,63 @@ describe('useJobList', () => {
 
     expect(result.current.jobs).toEqual([jobA])
   })
+
+  it('setStatus triggers an immediate re-fetch with that status filter', async () => {
+    vi.mocked(listJobs).mockResolvedValue([jobA, jobB])
+
+    const { result } = renderHook(() => useJobList())
+    await waitFor(() => expect(listJobs).toHaveBeenCalledWith(undefined))
+
+    vi.mocked(listJobs).mockResolvedValue([jobB])
+    act(() => {
+      result.current.setStatus('failed')
+    })
+
+    await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith('failed'))
+    await waitFor(() => expect(result.current.jobs).toEqual([jobB]))
+  })
+
+  it('switching the filter back to "All" re-fetches with no filter', async () => {
+    vi.mocked(listJobs).mockResolvedValue([jobA, jobB])
+
+    const { result } = renderHook(() => useJobList())
+    await waitFor(() => expect(listJobs).toHaveBeenCalledWith(undefined))
+
+    act(() => {
+      result.current.setStatus('failed')
+    })
+    await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith('failed'))
+
+    act(() => {
+      result.current.setStatus('')
+    })
+    await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith(undefined))
+  })
+
+  it('the poll interval continues using the current filter after it changes', async () => {
+    vi.useFakeTimers()
+    vi.mocked(listJobs).mockResolvedValue([jobA])
+
+    const { result } = renderHook(() => useJobList())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(listJobs).toHaveBeenLastCalledWith(undefined)
+
+    vi.mocked(listJobs).mockResolvedValue([jobB])
+    act(() => {
+      result.current.setStatus('failed')
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(listJobs).toHaveBeenLastCalledWith('failed')
+    const callsAfterFilterChange = vi.mocked(listJobs).mock.calls.length
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(listJobs).toHaveBeenCalledTimes(callsAfterFilterChange + 1)
+    expect(listJobs).toHaveBeenLastCalledWith('failed')
+  })
 })

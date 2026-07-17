@@ -4,11 +4,12 @@ import type { JobStatusResponse } from '../types'
 interface Props {
   jobs: JobStatusResponse[]
   onJobChanged: (job: JobStatusResponse) => void
+  filtered?: boolean
 }
 
-export function JobList({ jobs, onJobChanged }: Props) {
+export function JobList({ jobs, onJobChanged, filtered = false }: Props) {
   if (jobs.length === 0) {
-    return <p>No jobs submitted from this browser yet.</p>
+    return <p>{filtered ? 'No jobs match this filter.' : 'No jobs yet.'}</p>
   }
 
   return (
