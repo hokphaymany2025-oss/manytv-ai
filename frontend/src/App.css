@@ -1,0 +1,160 @@
+.app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  text-align: left;
+}
+
+.forms {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+}
+
+.job-form {
+  flex: 1 1 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.job-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.job-form input,
+.job-form textarea {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: inherit;
+}
+
+.job-form button {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 8px 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.job-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.form-error {
+  color: #d33;
+  font-size: 14px;
+}
+
+.job-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.job-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.job-row__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.job-row__kind {
+  font-weight: 600;
+}
+
+.job-row__id {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.job-row__status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: var(--code-bg);
+}
+
+.job-row__status--done {
+  background: rgba(60, 180, 90, 0.2);
+}
+
+.job-row__status--failed {
+  background: rgba(220, 60, 60, 0.2);
+}
+
+.job-row__status--cancelled,
+.job-row__status--cancelling {
+  background: rgba(200, 150, 30, 0.2);
+}
+
+.job-row__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.job-row__actions button {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+}
+
+.job-row__actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.job-row__error {
+  color: #d33;
+  font-size: 14px;
+}
+
+.job-row__script {
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 14px;
+  background: var(--code-bg);
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.job-row__shots {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.job-row__download {
+  margin-left: 8px;
+}
