@@ -1,0 +1,94 @@
+# ManyTV — TODO
+
+Generated from a full-repo analysis on 2026-07-17. See `PROJECT_ANALYSIS.md` for the full reasoning behind each item. Priority key: **P0** = broken/production-blocking, **P1** = should fix soon, **P2** = worth doing, **P3** = nice to have.
+
+---
+
+## Completed [x]
+
+- [x] FastAPI backend skeleton with lifespan-managed startup/shutdown (`backend/app.py`)
+- [x] Env-driven settings via `pydantic-settings`, `.env.example` kept in sync with `Settings` defaults (`backend/core/config.py`)
+- [x] ComfyUI HTTP + WebSocket client — queue prompt, stream progress, fetch history, download outputs (`backend/core/comfyui_client.py`)
+- [x] Single-slot FIFO job worker shared by both job kinds, to avoid two processes contending for one 8GB VRAM budget (`backend/core/worker.py`)
+- [x] `/api/generate-script` — LLM-backed script generation via Ollama's OpenAI-compat shim, including defensive `<think>` block stripping for Qwen3 (`backend/core/llm_client.py`, `backend/api/routes/generate_script.py`)
+- [x] `/api/storyboard` — script → shots → per-shot ComfyUI generation → downloaded output files (`backend/api/routes/storyboard.py`)
+- [x] `GET /api/jobs/{id}` polling endpoint, `GET /health` liveness check
+- [x] Naive shot-splitting (one shot per non-empty script line) with an escape hatch for explicit shot lists
+- [x] Workflow templating by `CLIPTextEncode` node title (`Positive`/`Negative`), documented in `backend/workflows/README.md`
+- [x] Shipped, verified-working default workflow: SD1.5 + AnimateDiff v3 text-to-video (`backend/workflows/default_t2v.json`)
+- [x] `scripts/run_comfyui.ps1` — launches ComfyUI with Dynamic-VRAM-correct flags, checked against the actual installed `cli_args.py` rather than assumed
+- [x] Anti-OOM safeguards: single-slot concurrency, `MAX_SHOTS_PER_JOB`, `GENERATION_TIMEOUT_SECONDS`, `--vram-headroom`
+- [x] **Real end-to-end run verified on target hardware** (Intel Arc A750): shot 0 of job `fb4850f6-17c8-4798-881f-6321b45413b5` generated a valid `.mp4` — see `output/fb4850f6-17c8-4798-881f-6321b45413b5/shot_000/ManyTV_00002.mp4` and `server.log`
+- [x] README.md — accurate, verified-on-this-machine setup and architecture documentation
+
+## Current tasks [ ]
+
+- [x] Full-repo read-only architecture audit (2026-07-17) — produced `PROJECT_ANALYSIS.md`, this file, and `SESSION_STATE.md`. No source code touched; see `SESSION_STATE.md` Session Log for exact scope.
+- [ ] **`git init` this repo and commit the current working state** — see "Exact next command/task" in `SESSION_STATE.md`. Nothing else below should be started until this lands, since there's currently no way to recover from a bad edit.
+- [ ] Everything else is not yet started (no stray branches, no partially-written files, no uncommitted-looking WIP). The project is at a clean stopping point between "backend works" and "harden + build frontend." Treat the Bugs and remaining P0/P1 items below as the task list once git is initialized.
+
+---
+
+## Bugs
+
+### BUG-1 (P0) — ComfyUI WebSocket connection dies mid-storyboard-job with "keepalive ping timeout", losing the whole job
+
+**Confirmed in `server.log`, not hypothetical.** Job `fb4850f6-17c8-4798-881f-6321b45413b5`: shot 0 succeeded fully; shot 1 was queued and then, ~50s later with no progress events logged, the client raised:
+```
+websockets.exceptions.ConnectionClosedError: sent 1011 (internal error) keepalive ping timeout; no close frame received
+```
+from `backend/core/comfyui_client.py:70` (inside `wait_for_completion`). The existing mitigation (`ping_interval=None` on the client's own `websockets.connect()`, `comfyui_client.py:76`) only disables the **client's** keepalive pings. Reading the installed `websockets==16.1` source confirms `keepalive()` only runs `if self.ping_interval is not None` — so this exact error can't be coming from the client. It's most likely **ComfyUI's own WebSocket server** failing its side of the keepalive because ComfyUI's process is synchronously blocked mid-generation and can't service its own ping/pong in time — the same failure mode the code comment already anticipated, just from the direction the fix doesn't cover.
+
+- **Impact:** any multi-shot storyboard job can lose all remaining shots (and be marked fully `FAILED`) the moment ComfyUI is busy long enough to miss its own keepalive — which is likely to recur on longer/heavier generations, not a one-off fluke.
+- **Fix direction:** investigate whether ComfyUI exposes its own `--ping-interval`/timeout flags to increase server-side tolerance; alternatively, wrap `wait_for_completion` with a reconnect-and-resume-polling-via-`/history` fallback instead of treating any WebSocket drop as fatal to the whole job.
+
+### BUG-2 (P1) — `workflow_name` is not sanitized before being used to build a filesystem path
+
+`backend/api/routes/storyboard.py:39-47`:
+```python
+path = settings.workflow_path / f"{workflow_name}.json"
+```
+`workflow_name` comes directly from the `StoryboardRequest` request body with no validation (no allowlist, no `Path.name`-only check, no rejection of `/` or `..`). A request like `{"workflow_name": "../../../../some/other/file"}` will attempt to read `<other/file>.json` from outside `backend/workflows/`. Combined with wildcard CORS (`allow_origins=["*"]`) and zero authentication on any endpoint (see BUG-3), this is reachable from any origin, including a malicious webpage in a browser on the same machine.
+- **Fix:** validate `workflow_name` against `^[\w-]+$` (or resolve the final path and assert it's still inside `settings.workflow_path`) before use.
+
+### BUG-3 (P1) — No authentication and wildcard CORS on every endpoint
+
+`backend/app.py:48-53`: `allow_origins=["*"]`, `allow_methods=["*"]`, `allow_headers=["*"]`, and no auth dependency on any route. Fine as long as this only ever binds to `127.0.0.1` for a single local user (the documented intent) — but there's nothing in the code enforcing that assumption, and it's exactly what turns BUG-2 into something exploitable by any page the user's browser visits, not just a deliberate attacker with network access.
+- **Fix:** at minimum, restrict CORS to explicit known origins once a frontend exists; consider binding uvicorn to `127.0.0.1` explicitly rather than relying on the operator to remember `--host` defaults, and/or a simple shared-secret header if the API will ever be reachable beyond localhost.
+
+### BUG-4 (P2) — Partial job failure loses successful-shot results
+
+`backend/api/routes/storyboard.py:90-129`: if shot *N* fails, the whole `_run_storyboard_job` handler raises, `worker.py`'s catch-all sets `job.status = FAILED` and `job.error = str(exc)`, but `job.result` is never populated — so shots 0..N-1 that *succeeded* (and whose files are sitting on disk in `output/<job_id>/shot_000/` etc.) are invisible to anyone polling `/api/jobs/{id}`. This directly happened in the one real run on record (BUG-1's job): shot 0's `.mp4` exists but the job API would report only an error, no indication shot 0 worked.
+- **Fix:** accumulate `results` as shots complete and attach whatever was gathered so far to `job.result` (or a `partial_result`) even on failure, rather than only setting it on full success.
+
+### BUG-5 (P3) — Two independent `ComfyUIClient` instances constructed for no functional reason
+
+`backend/app.py:31` (lifespan health check) and `backend/api/routes/storyboard.py:31` (module-level) each construct their own `ComfyUIClient(get_settings())`. Harmless (the class is stateless) but redundant — worth consolidating into one shared instance if the class ever grows connection-pooling state.
+
+---
+
+## Missing features
+
+- [ ] **Job persistence.** `SingleSlotWorker._jobs` is a plain in-process dict — restarting the backend loses all job history and in-flight-job state permanently. Explicitly self-documented as a known gap in README.md. (P1)
+- [ ] **Job cancellation.** No way to cancel a queued or running job via the API — a mis-submitted 50-shot job has to run to completion or the whole process has to be killed. (P2)
+- [ ] **Partial-result recovery / resume.** No retry-from-last-successful-shot if a job fails partway (compounds BUG-1 and BUG-4 — a transient WebSocket blip currently costs all remaining shots' GPU time, not just the one that failed). (P1)
+- [ ] **Automated tests.** Zero test coverage anywhere — no `tests/` directory, no pytest in `requirements.txt`. Confidence currently rests entirely on one manual e2e run. At minimum: unit tests for `_naive_shot_split`, `_apply_shot_to_workflow`, and the worker's queue/failure semantics; an integration test that mocks the ComfyUI HTTP/WS surface. (P1)
+- [ ] **CI.** No `.github/workflows/` or equivalent — nothing runs automatically on change. Low priority until tests exist to run. (P2)
+- [ ] **Version control.** The project is not currently a git repository at all (no `.git/`) despite having a correct `.gitignore` already in place. All work here is currently unprotected against loss. (P0 — trivial to fix, disproportionate risk if skipped)
+- [ ] **Frontend.** Explicitly out of scope so far per README ("No frontend yet — this is the orchestration backend only"). Not a bug, just the obvious next big chunk of work once the backend is hardened. (P2)
+- [ ] **Structured/queryable job history.** Even with persistence, there's currently no endpoint to list jobs (only fetch by known ID) — worth adding once persistence lands. (P3)
+- [ ] **Request size limits.** No length cap on `prompt`/`script` free-text fields. (P3)
+- [ ] **Dependency pinning/lockfile.** `requirements.txt` uses floors only (`>=`); no lockfile, so a fresh install on a new machine isn't guaranteed to reproduce the exact verified environment. (P2)
+
+---
+
+## Recommended next steps (in order)
+
+1. **`git init` and commit the current working state as-is** (P0, minutes of work, protects everything else). Do this before touching anything else below.
+2. **Fix BUG-2** (path traversal in `workflow_name`) — small, self-contained, closes a real hole before anything gets network-exposed.
+3. **Investigate and fix/mitigate BUG-1** (WebSocket keepalive drop) — this is the one thing standing between "works for one shot" and "reliably works for a real multi-shot storyboard job," which is the actual product goal.
+4. **Fix BUG-4** alongside BUG-1 — while touching the failure path, make partial progress visible/recoverable rather than silently discarded.
+5. **Add a minimal test suite** covering the worker's queue/failure semantics and the pure functions in `storyboard.py` (`_naive_shot_split`, `_apply_shot_to_workflow`) — cheap, and would have caught the shape of BUG-4 immediately.
+6. **Decide on job persistence** (SQLite is explicitly suggested in the README already) once the above reliability work is done — no point persisting a job model that's about to change shape for partial-result support.
+7. **Revisit CORS/auth (BUG-3)** before any deployment beyond a single trusted local machine.
+8. Only after 1–7: start on the frontend, since the API surface (especially job status/result shape) is likely to shift slightly from BUG-4's fix.

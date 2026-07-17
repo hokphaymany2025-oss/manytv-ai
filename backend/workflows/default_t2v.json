@@ -1,0 +1,98 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "v1-5-pruned-emaonly-fp16.safetensors"
+    },
+    "_meta": { "title": "Load Checkpoint" }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "",
+      "clip": ["1", 1]
+    },
+    "_meta": { "title": "Positive" }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "text, watermark, low quality, worst quality, blurry, static",
+      "clip": ["1", 1]
+    },
+    "_meta": { "title": "Negative" }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 512,
+      "height": 512,
+      "batch_size": 16
+    },
+    "_meta": { "title": "Empty Latent Image (frame count)" }
+  },
+  "5": {
+    "class_type": "ADE_LoadAnimateDiffModel",
+    "inputs": {
+      "model_name": "v3_sd15_mm.ckpt"
+    },
+    "_meta": { "title": "Load AnimateDiff Motion Model" }
+  },
+  "6": {
+    "class_type": "ADE_ApplyAnimateDiffModelSimple",
+    "inputs": {
+      "motion_model": ["5", 0]
+    },
+    "_meta": { "title": "Apply AnimateDiff Model" }
+  },
+  "7": {
+    "class_type": "ADE_UseEvolvedSampling",
+    "inputs": {
+      "model": ["1", 0],
+      "beta_schedule": "autoselect",
+      "m_models": ["6", 0]
+    },
+    "_meta": { "title": "Use Evolved Sampling (AnimateDiff)" }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["7", 0],
+      "seed": 0,
+      "steps": 20,
+      "cfg": 8.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "positive": ["2", 0],
+      "negative": ["3", 0],
+      "latent_image": ["4", 0]
+    },
+    "_meta": { "title": "KSampler" }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["1", 2]
+    },
+    "_meta": { "title": "VAE Decode" }
+  },
+  "10": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["9", 0],
+      "frame_rate": 8,
+      "loop_count": 0,
+      "filename_prefix": "ManyTV",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true,
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false
+    },
+    "_meta": { "title": "Video Combine" }
+  }
+}
