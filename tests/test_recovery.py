@@ -1,7 +1,7 @@
 """Tests for the resume/reconciliation logic added for the Job Manager +
 Queue + Resume System milestone (TODO.md): backend/core/recovery.py's
 job-level routing, and the three shot-level reconciliation branches inside
-backend/api/routes/storyboard.py's _run_storyboard_job (DONE -> skip,
+backend/core/storyboard_engine.py's _run_storyboard_job (DONE -> skip,
 PENDING -> normal submit, SUBMITTED -> reconcile against ComfyUI's
 /history, either reusing the existing result or resubmitting fresh).
 
@@ -12,7 +12,7 @@ tests/test_comfyui_client.py's existing style.
 import asyncio
 from unittest.mock import AsyncMock
 
-from backend.api.routes import storyboard as storyboard_module
+from backend.core import storyboard_engine as storyboard_engine_module
 from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings
 from backend.core.job_store import JobStore
@@ -226,18 +226,18 @@ def test_resume_comfyui_jobs_finalizes_cancelling_row_found_at_refetch_time(tmp_
     assert final_row["status"] == JobStatus.CANCELLED.value
 
 
-# ---- backend/api/routes/storyboard.py: shot-level reconciliation ----
+# ---- backend/core/storyboard_engine.py: shot-level reconciliation ----
 
 
 def _prepare_storyboard_env(monkeypatch, tmp_path, store: JobStore):
     """Points _run_storyboard_job's settings/store/workflow-loading at test
     doubles without touching the real output/ dir or backend/workflows/."""
     settings = Settings(output_dir=str(tmp_path / "output"), db_path=str(tmp_path / "jobs.db"))
-    monkeypatch.setattr(storyboard_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(storyboard_module, "get_job_store", lambda: store)
-    monkeypatch.setattr(storyboard_module, "_load_workflow", lambda name, settings: {})
-    monkeypatch.setattr(storyboard_module.comfyui_client, "health_check", AsyncMock(return_value=True))
-    monkeypatch.setattr(storyboard_module.comfyui_client, "fetch_output_bytes", AsyncMock(return_value=b"data"))
+    monkeypatch.setattr(storyboard_engine_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(storyboard_engine_module, "get_job_store", lambda: store)
+    monkeypatch.setattr(storyboard_engine_module, "_load_workflow", lambda name, settings: {})
+    monkeypatch.setattr(storyboard_engine_module.comfyui_client, "health_check", AsyncMock(return_value=True))
+    monkeypatch.setattr(storyboard_engine_module.comfyui_client, "fetch_output_bytes", AsyncMock(return_value=b"data"))
 
 
 def _make_job(shots: list[dict]) -> Job:
@@ -251,15 +251,15 @@ def test_done_shot_is_skipped_not_reverified_against_comfyui(tmp_path, monkeypat
     async def scenario():
         await store.upsert_shot("job-1", 0, ShotStatus.DONE.value, prompt_id="old-prompt", files=["a.mp4"])
         monkeypatch.setattr(
-            storyboard_module.comfyui_client, "queue_prompt",
+            storyboard_engine_module.comfyui_client, "queue_prompt",
             AsyncMock(side_effect=AssertionError("must not resubmit a DONE shot")),
         )
         monkeypatch.setattr(
-            storyboard_module.comfyui_client, "get_history",
+            storyboard_engine_module.comfyui_client, "get_history",
             AsyncMock(side_effect=AssertionError("must not re-check history for a DONE shot")),
         )
         job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
-        return await storyboard_module._run_storyboard_job(job)
+        return await storyboard_engine_module._run_storyboard_job(job)
 
     result = asyncio.run(scenario())
 
@@ -270,16 +270,16 @@ def test_pending_shot_goes_through_normal_submit_and_wait(tmp_path, monkeypatch)
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "queue_prompt", AsyncMock(return_value="new-prompt")
+        storyboard_engine_module.comfyui_client, "queue_prompt", AsyncMock(return_value="new-prompt")
     )
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "wait_for_completion",
+        storyboard_engine_module.comfyui_client, "wait_for_completion",
         AsyncMock(return_value=_fake_history("shot0.mp4")),
     )
 
     async def scenario():
         job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
-        result = await storyboard_module._run_storyboard_job(job)
+        result = await storyboard_engine_module._run_storyboard_job(job)
         shots = await store.get_shots("job-1")
         return result, shots
 
@@ -288,7 +288,7 @@ def test_pending_shot_goes_through_normal_submit_and_wait(tmp_path, monkeypatch)
     assert result["shots"][0]["prompt_id"] == "new-prompt"
     assert shots[0]["status"] == ShotStatus.DONE.value
     assert shots[0]["prompt_id"] == "new-prompt"
-    storyboard_module.comfyui_client.queue_prompt.assert_awaited_once()
+    storyboard_engine_module.comfyui_client.queue_prompt.assert_awaited_once()
 
 
 def test_submitted_shot_with_history_found_is_reused_not_resubmitted(tmp_path, monkeypatch):
@@ -299,18 +299,18 @@ def test_submitted_shot_with_history_found_is_reused_not_resubmitted(tmp_path, m
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "queue_prompt",
+        storyboard_engine_module.comfyui_client, "queue_prompt",
         AsyncMock(side_effect=AssertionError("must not resubmit when history is found")),
     )
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "get_history",
+        storyboard_engine_module.comfyui_client, "get_history",
         AsyncMock(return_value=_fake_history("shot0.mp4")),
     )
 
     async def scenario():
         await store.upsert_shot("job-1", 0, ShotStatus.SUBMITTED.value, prompt_id="old-prompt", submitted_at=1.0)
         job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
-        result = await storyboard_module._run_storyboard_job(job)
+        result = await storyboard_engine_module._run_storyboard_job(job)
         shots = await store.get_shots("job-1")
         return result, shots
 
@@ -334,21 +334,21 @@ def test_submitted_shot_with_no_history_is_resubmitted_fresh(tmp_path, monkeypat
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "get_history",
+        storyboard_engine_module.comfyui_client, "get_history",
         AsyncMock(side_effect=ComfyUIError("no history entry")),
     )
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "queue_prompt", AsyncMock(return_value="resubmitted-prompt")
+        storyboard_engine_module.comfyui_client, "queue_prompt", AsyncMock(return_value="resubmitted-prompt")
     )
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "wait_for_completion",
+        storyboard_engine_module.comfyui_client, "wait_for_completion",
         AsyncMock(return_value=_fake_history("shot0.mp4")),
     )
 
     async def scenario():
         await store.upsert_shot("job-1", 0, ShotStatus.SUBMITTED.value, prompt_id="old-prompt", submitted_at=1.0)
         job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
-        result = await storyboard_module._run_storyboard_job(job)
+        result = await storyboard_engine_module._run_storyboard_job(job)
         shots = await store.get_shots("job-1")
         return result, shots
 
@@ -357,7 +357,7 @@ def test_submitted_shot_with_no_history_is_resubmitted_fresh(tmp_path, monkeypat
     assert result["shots"][0]["prompt_id"] == "resubmitted-prompt"
     assert shots[0]["status"] == ShotStatus.DONE.value
     assert shots[0]["prompt_id"] == "resubmitted-prompt"
-    storyboard_module.comfyui_client.queue_prompt.assert_awaited_once()
+    storyboard_engine_module.comfyui_client.queue_prompt.assert_awaited_once()
 
     logs = asyncio.run(store.get_job_logs("job-1"))
     assert any(
@@ -374,18 +374,18 @@ def test_submitted_shot_with_comfyui_unreachable_propagates_without_resubmitting
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "get_history",
+        storyboard_engine_module.comfyui_client, "get_history",
         AsyncMock(side_effect=ConnectionError("comfyui unreachable")),
     )
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "queue_prompt",
+        storyboard_engine_module.comfyui_client, "queue_prompt",
         AsyncMock(side_effect=AssertionError("must not resubmit on an unrelated error")),
     )
 
     async def scenario():
         await store.upsert_shot("job-1", 0, ShotStatus.SUBMITTED.value, prompt_id="old-prompt", submitted_at=1.0)
         job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
-        await storyboard_module._run_storyboard_job(job)
+        await storyboard_engine_module._run_storyboard_job(job)
 
     try:
         asyncio.run(scenario())
@@ -404,15 +404,15 @@ def test_shot_generation_failure_writes_shot_level_error_log_entry(tmp_path, mon
     persisting an existing console line) land with the shot_index attached."""
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
-    monkeypatch.setattr(storyboard_module.comfyui_client, "queue_prompt", AsyncMock(return_value="prompt-0"))
+    monkeypatch.setattr(storyboard_engine_module.comfyui_client, "queue_prompt", AsyncMock(return_value="prompt-0"))
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "wait_for_completion",
+        storyboard_engine_module.comfyui_client, "wait_for_completion",
         AsyncMock(side_effect=RuntimeError("generation crashed")),
     )
 
     async def scenario():
         job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
-        await storyboard_module._run_storyboard_job(job)
+        await storyboard_engine_module._run_storyboard_job(job)
 
     try:
         asyncio.run(scenario())
@@ -437,7 +437,7 @@ def test_shot_loop_raises_job_cancelled_when_status_is_cancelling(tmp_path, monk
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
     monkeypatch.setattr(
-        storyboard_module.comfyui_client, "queue_prompt",
+        storyboard_engine_module.comfyui_client, "queue_prompt",
         AsyncMock(side_effect=AssertionError("must not submit anything once cancelling")),
     )
 
@@ -449,7 +449,7 @@ def test_shot_loop_raises_job_cancelled_when_status_is_cancelling(tmp_path, monk
             {"index": 0, "description": "", "prompt": "p", "negative_prompt": ""},
             {"index": 1, "description": "", "prompt": "p", "negative_prompt": ""},
         ])
-        await storyboard_module._run_storyboard_job(job)
+        await storyboard_engine_module._run_storyboard_job(job)
 
     try:
         asyncio.run(scenario())
@@ -466,13 +466,13 @@ def test_shot_loop_checks_cancellation_between_every_shot(tmp_path, monkeypatch)
     never be submitted."""
     store = _store(tmp_path)
     _prepare_storyboard_env(monkeypatch, tmp_path, store)
-    monkeypatch.setattr(storyboard_module.comfyui_client, "queue_prompt", AsyncMock(return_value="prompt-0"))
+    monkeypatch.setattr(storyboard_engine_module.comfyui_client, "queue_prompt", AsyncMock(return_value="prompt-0"))
 
     async def fake_wait_for_completion(prompt_id, on_progress=None):
         await store.update_job_status("job-1", JobStatus.CANCELLING.value)
         return _fake_history("shot0.mp4")
 
-    monkeypatch.setattr(storyboard_module.comfyui_client, "wait_for_completion", fake_wait_for_completion)
+    monkeypatch.setattr(storyboard_engine_module.comfyui_client, "wait_for_completion", fake_wait_for_completion)
 
     async def scenario():
         await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
@@ -480,7 +480,7 @@ def test_shot_loop_checks_cancellation_between_every_shot(tmp_path, monkeypatch)
             {"index": 0, "description": "", "prompt": "p", "negative_prompt": ""},
             {"index": 1, "description": "", "prompt": "p", "negative_prompt": ""},
         ])
-        await storyboard_module._run_storyboard_job(job)
+        await storyboard_engine_module._run_storyboard_job(job)
 
     try:
         asyncio.run(scenario())
@@ -489,4 +489,4 @@ def test_shot_loop_checks_cancellation_between_every_shot(tmp_path, monkeypatch)
         raised = True
 
     assert raised
-    storyboard_module.comfyui_client.queue_prompt.assert_awaited_once()
+    storyboard_engine_module.comfyui_client.queue_prompt.assert_awaited_once()

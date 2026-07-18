@@ -1,5 +1,5 @@
 """Direct unit tests for the pure helper functions in
-backend/api/routes/storyboard.py: _naive_shot_split (script -> shot list)
+backend/core/storyboard_engine.py: _naive_shot_split (script -> shot list)
 and _apply_shot_to_workflow (shot -> patched ComfyUI workflow JSON). Both
 were previously only exercised indirectly through _run_storyboard_job
 integration-style tests (see TODO.md item 13) -- these test them in
@@ -10,7 +10,7 @@ Plain synchronous functions, no async/store/worker dependencies -- no
 asyncio.run() or monkeypatching needed, unlike most of this test suite.
 """
 
-from backend.api.routes.storyboard import _apply_shot_to_workflow, _naive_shot_split
+from backend.core.storyboard_engine import _apply_shot_to_workflow, _naive_shot_split
 from backend.models.schemas import StoryboardShot
 
 

@@ -1,10 +1,44 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (Phase 2.1 — `project_id` exposed in the dashboard UI). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (Phase 3 — `storyboard.py` split into four modules by responsibility, zero behavior change). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (Phase 3) — `storyboard.py` split into four modules by responsibility
+
+**What was completed:** The user picked "storyboard.py refactor first" (over coverage measurement) as the next v1.2 item. `backend/api/routes/storyboard.py` (653 lines, the largest file in the codebase) did four unrelated things at once: route handlers, shot-splitting/workflow-templating business logic, SSE streaming, and artifact metadata. This was explicitly the highest-risk change this project has made so far — the most load-bearing file, referenced by 7 of the 9 backend test files, some via direct attribute access to private functions and module globals for monkeypatching.
+
+Used `EnterPlanMode` given the scope. Read the full current file plus every test file that references it before designing anything. Dispatched a Plan agent to independently verify the proposed module layout and, critically, the test-compatibility analysis against the real source (not a description of it) before writing any code. The agent's review confirmed the layout was sound but caught one real gap: I'd assumed only `tests/test_recovery.py`'s `comfyui_client` attribute patches needed updating (~17 lines), reasoning that monkeypatching an attribute on a shared singleton object survives regardless of which module name you access it through. That reasoning is correct for the `comfyui_client.health_check`/`.queue_prompt`/etc. patches — but three other patches in the same file (`monkeypatch.setattr(storyboard_module, "get_settings"/"get_job_store"/"_load_workflow", ...)`) are **module-level name rebindings**, not object mutations — Python resolves those bare names from whichever module a function is *defined* in, not wherever it's imported into. Since `_run_storyboard_job` moved to a new module, those three patches would have silently stopped taking effect, leaking the shot-reconciliation tests into the real DB/filesystem instead of the test's tmp_path-scoped doubles. Caught before any code was written, not after a test failure.
+
+Mid-turn, an unrelated generic "continue this Python project" message arrived (referencing a nonexistent `ARCHITECTURE.md` and "don't change architecture unless required") that conflicted with the refactor already in progress — flagged the conflict directly and confirmed via `AskUserQuestion` to continue the refactor rather than silently picking one interpretation.
+
+**Final module layout** (plan file: `C:\Users\hokph\.claude\plans\agile-whistling-firefly.md`):
+- **`backend/core/storyboard_engine.py`** (new, 261 lines) — `_naive_shot_split`, `_load_workflow`, `_apply_shot_to_workflow`, `_save_history_outputs`, `_run_storyboard_job`, the `comfyui_client` singleton, and the `worker.register_handler("storyboard", ...)` call. No FastAPI import, matching every other `backend/core/*.py` module.
+- **`backend/core/artifacts.py`** (new, 30 lines) — `_artifact_from_path` only.
+- **`backend/api/job_responses.py`** (new, 87 lines) — `_build_job_status_response`. This module wasn't in the original "four responsibilities" framing — it had to be extracted to break a circular import: `storyboard.py` needs `_job_events_stream` from the new `sse.py`, and `_job_events_stream` needs `_build_job_status_response`; keeping the latter in the routes file would make `storyboard.py` and `sse.py` import each other. Verified only `_job_events_stream` (not the other two SSE generators) actually depends on it.
+- **`backend/api/sse.py`** (new, 118 lines) — `_SSE_KEEPALIVE_SECONDS`, `_sse_frame`, `_all_jobs_events_stream`, `_job_events_stream`, `_job_logs_events_stream`.
+- **`backend/api/routes/storyboard.py`** (trimmed 653 → 231 lines) — only `router = APIRouter(...)` and the ten `@router.*`-decorated endpoints, importing what each needs from the four modules above. No longer imports `ComfyUIClient`/`ComfyUIError`/`Settings`/`JobCancelled` — nothing left in the routes file uses them.
+
+**Test updates** (import paths only — no assertions or test behavior changed):
+- `tests/test_storyboard_helpers.py`: import moved to `backend.core.storyboard_engine`.
+- `tests/test_job_routes.py`: 3 `_artifact_from_path` call sites now import it from `backend.core.artifacts` directly — the only symbol in this file with no remaining caller inside the routes module (everything else — `retry_job`, `cancel_job`, `get_job_status`, `get_job_logs`, `list_jobs_route`, `download_shot_file`, `job_events`, `job_logs_events`, `worker`, the three SSE stream generators — needed zero changes, since `storyboard.py` genuinely still imports each of them to wire up its own routes, not a compatibility shim).
+- `tests/test_recovery.py`: the shot-level reconciliation section (~33 `storyboard_module` references, roughly lines 229-493) repointed to a new `storyboard_engine_module` import, per the Plan-agent's catch above. The job-level routing tests (roughly lines 34-227) were untouched — confirmed they never referenced the storyboard module at all.
+
+**Verification:** `python -c "from backend.app import app"` confirmed the full import chain resolves with no circular import, before running anything else. `python -m pytest tests/ -v` → **128 passed** — identical count to before the refactor (same test names too), confirming genuinely zero behavior change. `npm run test` (frontend, unaffected by this backend-only change) → 55 passed, re-run as a sanity check per the plan's verification section.
+
+**Files changed:** `backend/core/storyboard_engine.py` (new), `backend/core/artifacts.py` (new), `backend/api/job_responses.py` (new), `backend/api/sse.py` (new), `backend/api/routes/storyboard.py` (trimmed), `tests/test_storyboard_helpers.py`, `tests/test_job_routes.py`, `tests/test_recovery.py`, `TODO.md`, `SESSION_STATE.md`. No frontend files, no `app.py`/`recovery.py` changes needed (confirmed both have no coupling to storyboard.py's internals beyond `storyboard.router`/generic `worker.resubmit()` dispatch).
+
+**Remaining problems / blockers:** None blocking.
+- Phase 3's other item (coverage measurement, `pytest-cov`/`vitest --coverage`) not started.
+- Phase 2's retry/cancel attempt history not started — needs its own design pass.
+- Phase 4 not started, gated on revisiting BUG-3's localhost-only scope decision.
+- Nothing committed yet — waiting for approval.
+
+**Exact next task:** Get approval to commit this session's changes on `feature/v1.2-development`. Once approved and ready to keep building: coverage measurement (Phase 3's remaining item) or retry/cancel attempt history (Phase 2's remaining item) are the two independent next candidates.
+
+---
 
 ### 2026-07-18 (Phase 2.1) — `project_id` exposed in the dashboard, display only
 

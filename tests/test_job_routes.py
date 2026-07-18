@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.api.routes import storyboard as storyboard_module
+from backend.core.artifacts import _artifact_from_path
 from backend.core.config import Settings
 from backend.core.events import EventBus
 from backend.core.job_store import JobStore
@@ -430,7 +431,7 @@ def test_artifact_from_path_reports_size_and_content_type_for_a_real_file(tmp_pa
     real_file = tmp_path / "video.mp4"
     real_file.write_bytes(b"fake video data, 22 bytes")
 
-    artifact = storyboard_module._artifact_from_path(str(real_file))
+    artifact = _artifact_from_path(str(real_file))
 
     assert artifact.filename == "video.mp4"
     assert artifact.size_bytes == real_file.stat().st_size
@@ -441,7 +442,7 @@ def test_artifact_from_path_unknown_extension_has_no_content_type(tmp_path):
     real_file = tmp_path / "data.unknownext"
     real_file.write_bytes(b"data")
 
-    artifact = storyboard_module._artifact_from_path(str(real_file))
+    artifact = _artifact_from_path(str(real_file))
 
     assert artifact.content_type is None
     assert artifact.size_bytes == real_file.stat().st_size
@@ -454,7 +455,7 @@ def test_artifact_from_path_missing_file_has_null_size_not_an_exception(tmp_path
     stat() failing here must not crash the whole job status response."""
     missing_path = str(tmp_path / "gone.mp4")
 
-    artifact = storyboard_module._artifact_from_path(missing_path)
+    artifact = _artifact_from_path(missing_path)
 
     assert artifact.filename == "gone.mp4"
     assert artifact.size_bytes is None
