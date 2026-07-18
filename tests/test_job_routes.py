@@ -409,6 +409,7 @@ def test_download_shot_file_returns_existing_file(tmp_path, monkeypatch):
     response = asyncio.run(storyboard_module.download_shot_file(job_id="job-1", shot_index=0, filename="video.mp4"))
 
     assert str(response.path) == str(shot_dir / "video.mp4")
+    assert response.media_type == "video/mp4"
 
 
 def test_download_shot_file_missing_file_returns_404(tmp_path, monkeypatch):
@@ -419,6 +420,78 @@ def test_download_shot_file_missing_file_returns_404(tmp_path, monkeypatch):
         asyncio.run(storyboard_module.download_shot_file(job_id="job-1", shot_index=0, filename="video.mp4"))
 
     assert exc_info.value.status_code == 404
+
+
+# ---- artifacts ----
+
+
+def test_artifact_from_path_reports_size_and_content_type_for_a_real_file(tmp_path):
+    real_file = tmp_path / "video.mp4"
+    real_file.write_bytes(b"fake video data, 22 bytes")
+
+    artifact = storyboard_module._artifact_from_path(str(real_file))
+
+    assert artifact.filename == "video.mp4"
+    assert artifact.size_bytes == real_file.stat().st_size
+    assert artifact.content_type == "video/mp4"
+
+
+def test_artifact_from_path_unknown_extension_has_no_content_type(tmp_path):
+    real_file = tmp_path / "data.unknownext"
+    real_file.write_bytes(b"data")
+
+    artifact = storyboard_module._artifact_from_path(str(real_file))
+
+    assert artifact.content_type is None
+    assert artifact.size_bytes == real_file.stat().st_size
+
+
+def test_artifact_from_path_missing_file_has_null_size_not_an_exception(tmp_path):
+    """The one deliberately-added defensive case: a file recorded in
+    shots.files can genuinely disappear between being saved and being read
+    on a later poll (confirmed single-user, unmediated filesystem access) --
+    stat() failing here must not crash the whole job status response."""
+    missing_path = str(tmp_path / "gone.mp4")
+
+    artifact = storyboard_module._artifact_from_path(missing_path)
+
+    assert artifact.filename == "gone.mp4"
+    assert artifact.size_bytes is None
+    assert artifact.content_type == "video/mp4"  # derived from the extension, no I/O needed
+
+
+def test_get_job_status_reports_real_artifact_metadata_for_a_done_shot(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    real_file = tmp_path / "shot0.mp4"
+    real_file.write_bytes(b"0123456789")
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "done", {"shots": []}, created_at=1.0)
+        await store.upsert_shot("job-1", 0, ShotStatus.DONE.value, files=[str(real_file)])
+        return await storyboard_module.get_job_status("job-1")
+
+    response = asyncio.run(scenario())
+
+    artifact = response.shots[0].files[0]
+    assert artifact.filename == "shot0.mp4"
+    assert artifact.size_bytes == 10
+    assert artifact.content_type == "video/mp4"
+
+
+def test_get_job_status_handles_a_shot_file_missing_from_disk(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "done", {"shots": []}, created_at=1.0)
+        await store.upsert_shot("job-1", 0, ShotStatus.DONE.value, files=[str(tmp_path / "gone.mp4")])
+        return await storyboard_module.get_job_status("job-1")
+
+    response = asyncio.run(scenario())
+
+    assert response.shots[0].files[0].size_bytes is None
 
 
 def test_download_shot_file_rejects_invalid_filename_pattern_over_http():

@@ -1,10 +1,32 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (Job Execution Logs session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (Job Output Artifacts session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (later still) — Job Output Artifacts added
+
+**What was completed:** Continued from `v0.9-job-logs` (confirmed as an existing tag already pointing at HEAD `a687cd6`, already pushed to `origin` — apparently done between sessions). Confirmed clean tree, 94/34 passing tests before planning. Used the same staged-planning flow as the last two features: read the current output-storage/API code fresh, entered Plan mode, resolved two confirmed forks directly with the user (**metadata computed at read time**, not persisted — no schema change to `shots.files`; **inline preview + metadata** in the frontend, not just enriched links), dispatched a Plan agent for the detailed design, then verified its two most load-bearing claims myself before trusting them: confirmed `_run_storyboard_job` really does call `health_check()` before any shot rows are created (matters for live-validation design), and corrected an over-broad claim in its file list — only `JobTimeline.test.ts` actually had a `files: ['a.mp4']`-shaped fixture needing an update, not all four files it named (checked by grep).
+
+- **Backend:** `backend/models/schemas.py` gained `ArtifactResponse`; `ShotStatusResponse.files` changed from `list[str]` to `list[ArtifactResponse]`. New `_artifact_from_path` helper in `storyboard.py` (`stat()` + `mimetypes.guess_type`, with a deliberately-justified `try/except OSError` around only the `.stat()` call — this is a confirmed single-user localhost deployment with unmediated filesystem access, so a file genuinely can disappear between being recorded and a later poll). `download_shot_file` gained an explicit `media_type=` so its header and the new JSON field can't silently diverge later. 5 new tests — `python -m pytest tests/ -v` → **99 passed**.
+- **Frontend:** no new hook needed (the data was already in `JobStatusResponse`). New `formatBytes.ts` (sibling to `formatTime.ts`) and `JobArtifacts.tsx` (pure `classifyArtifact` + render component: `<video>`/`<img>`/link-only by content-type, each with an `onError` fallback). `JobRow.tsx` needed a mandatory shape fix regardless of UX choice — used the opportunity to add a `showFiles` prop (default `true`) so the detail page can suppress its now-redundant per-file links without touching the dashboard. 15 new tests — `npm run test` → **49 passed**. `npm run build` clean.
+
+**Live validation, the strongest of any feature so far**: this machine's real `output/jobs.db` already held two genuine ComfyUI-produced jobs with real `.mp4` files (`7ec76e91...`, `bc89fff6...`) — opened one's real detail page and confirmed three actually-decodable `<video>` previews (`readyState: 4`, correct dimensions, not just present in the DOM), correct sizes, and zero duplicate download links from `JobRow` (confirming `showFiles={false}` worked). For the image/other-content-type/missing-file branches — unreachable live without a real ComfyUI run, since `health_check()` gates shot-row creation — used a throwaway script (scratchpad-only, same accepted pattern as BUG-1's TCP proxy) to write one fabricated job directly into the real `jobs.db`: a genuine 1x1 PNG rendered correctly as a real image, a non-media file showed a plain download link, and a shot pointing at a file that was never written showed "unknown size" with no crash. Deleted the fabricated job and its output directory immediately after, confirmed via `git status` and a directory listing that nothing fake was left behind.
+
+**Files changed:** `backend/models/schemas.py`, `backend/api/routes/storyboard.py`, `tests/test_job_routes.py`, `frontend/src/types.ts`, `frontend/src/api.ts`, `frontend/src/formatBytes.ts` (new), `frontend/src/formatBytes.test.ts` (new), `frontend/src/components/JobArtifacts.tsx` (new), `frontend/src/components/JobArtifacts.test.tsx` (new), `frontend/src/components/JobRow.tsx`, `frontend/src/components/JobTimeline.test.ts` (fixture fix only), `frontend/src/pages/JobDetailPage.tsx`, `frontend/src/App.css`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- Un-cached per-`stat()` cost on every job-status poll (new, low priority — see `TODO.md`).
+- Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed.
+- No retention/pruning for `job_logs`/`jobs`/`shots`; `storyboard.py`'s other pure functions still lack direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
+- **This session's changes are not yet committed.**
+
+**Exact next task:** Commit this session's Job Output Artifacts changes (not yet done).
+
+---
 
 ### 2026-07-18 (later) — Job Execution Logs added; repo pushed to a real GitHub remote
 
@@ -428,20 +450,20 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, and Job Execution Logs are all done and live-validated (see the `2026-07-18 (later)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- **This repo now has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`, `master` pushed along with `v0.7-job-dashboard`/`v0.8-job-timeline` tags. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
-- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's Job Execution Logs changes were not yet committed** as of this entry.
-- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests.
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, Job Execution Logs, and Job Output Artifacts are all done and live-validated (see the `2026-07-18 (later still)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- **This repo has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
+- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's Job Output Artifacts changes were not yet committed** as of this entry.
+- `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests, including two real jobs with genuine ComfyUI-produced `.mp4` files (`7ec76e91...`, `bc89fff6...`) useful for future live checks of anything artifact-related.
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
-- Backend: 94 tests passing (`python -m pytest tests/ -v`). Frontend: 34 tests passing (`cd frontend && npm run test`).
+- Backend: 99 tests passing (`python -m pytest tests/ -v`). Frontend: 49 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Commit this session's Job Execution Logs changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
+**Exact next task:** Commit this session's Job Output Artifacts changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
 
 **Commands to resume:**
 ```powershell
 cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
-python -m pytest tests/ -v        # confirm still 94 passed
-cd frontend && npm run test       # confirm still 34 passed
+python -m pytest tests/ -v        # confirm still 99 passed
+cd frontend && npm run test       # confirm still 49 passed
 ```

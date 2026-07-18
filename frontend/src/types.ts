@@ -25,11 +25,17 @@ export interface StoryboardResponse {
   shot_count: number
 }
 
+export interface ArtifactResponse {
+  filename: string
+  size_bytes: number | null
+  content_type: string | null
+}
+
 export interface ShotStatusResponse {
   shot_index: number
   status: string
   prompt_id: string | null
-  files: string[] | null
+  files: ArtifactResponse[] | null
   error: string | null
   created_at: number | null
   submitted_at: number | null

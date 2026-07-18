@@ -58,11 +58,17 @@ class StoryboardResponse(BaseModel):
     shot_count: int
 
 
+class ArtifactResponse(BaseModel):
+    filename: str
+    size_bytes: Optional[int] = None
+    content_type: Optional[str] = None
+
+
 class ShotStatusResponse(BaseModel):
     shot_index: int
     status: str
     prompt_id: Optional[str] = None
-    files: Optional[list[str]] = None
+    files: Optional[list[ArtifactResponse]] = None
     error: Optional[str] = None
     created_at: Optional[float] = None
     submitted_at: Optional[float] = None

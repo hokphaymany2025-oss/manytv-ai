@@ -19,6 +19,7 @@ separate resume implementation to keep in sync.
 import asyncio
 import json
 import logging
+import mimetypes
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -32,6 +33,7 @@ from backend.core.config import Settings, get_settings
 from backend.core.job_store import JobStore, get_job_store
 from backend.core.worker import Job, JobCancelled, JobStatus, LogLevel, LogStage, ShotStatus, worker
 from backend.models.schemas import (
+    ArtifactResponse,
     JobLogEntry,
     JobStatusResponse,
     ShotStatusResponse,
@@ -288,6 +290,26 @@ async def create_storyboard(request: StoryboardRequest) -> StoryboardResponse:
     return StoryboardResponse(job_id=job.id, status=job.status.value, shot_count=len(shots))
 
 
+def _artifact_from_path(raw_path: str) -> ArtifactResponse:
+    """Derives display metadata for one persisted output file.
+
+    Deliberately not persisted -- computed fresh from the raw path stored in
+    shots.files every time a job's status is read (see TODO.md's Job Output
+    Artifacts milestone). The try/except here is real, not reflexive: this is
+    a confirmed single-user localhost deployment with unmediated filesystem
+    access to output/, so a file can genuinely disappear between being
+    recorded and being read on a later poll -- letting stat() raise would
+    turn one deleted file into a permanently-broken job status response.
+    """
+    path = Path(raw_path)
+    content_type, _ = mimetypes.guess_type(path.name)
+    try:
+        size_bytes: Optional[int] = path.stat().st_size
+    except OSError:
+        size_bytes = None
+    return ArtifactResponse(filename=path.name, size_bytes=size_bytes, content_type=content_type)
+
+
 async def _build_job_status_response(
     store: JobStore, job_id: str, job_row: Optional[dict[str, Any]] = None,
 ) -> JobStatusResponse:
@@ -315,7 +337,7 @@ async def _build_job_status_response(
                 shot_index=r["shot_index"],
                 status=r["status"],
                 prompt_id=r["prompt_id"],
-                files=json.loads(r["files"]) if r["files"] else None,
+                files=[_artifact_from_path(f) for f in json.loads(r["files"])] if r["files"] else None,
                 error=r["error"],
                 created_at=r["created_at"],
                 submitted_at=r["submitted_at"],
@@ -331,7 +353,11 @@ async def _build_job_status_response(
         if done_shots:
             result = {
                 "shots": [
-                    {"shot_index": s.shot_index, "prompt_id": s.prompt_id, "files": s.files or []}
+                    {
+                        "shot_index": s.shot_index,
+                        "prompt_id": s.prompt_id,
+                        "files": [f.model_dump() for f in (s.files or [])],
+                    }
                     for s in done_shots
                 ]
             }
@@ -487,4 +513,4 @@ async def download_shot_file(
     path = settings.output_path / job_id / f"shot_{shot_index:03d}" / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="File not found.")
-    return FileResponse(path)
+    return FileResponse(path, media_type=mimetypes.guess_type(filename)[0])

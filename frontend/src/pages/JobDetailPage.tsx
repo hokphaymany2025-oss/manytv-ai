@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
+import { JobArtifacts } from '../components/JobArtifacts'
 import { JobExecutionLogs } from '../components/JobExecutionLogs'
 import { JobRow } from '../components/JobRow'
 import { JobTimeline } from '../components/JobTimeline'
@@ -20,12 +21,14 @@ export function JobDetailPage() {
       {!notFound && job !== null && (
         <>
           <ul className="job-list">
-            <JobRow job={job} onChanged={updateJob} />
+            <JobRow job={job} onChanged={updateJob} showFiles={false} />
           </ul>
           <h2>Timeline</h2>
           <JobTimeline job={job} />
           <h2>Execution Logs</h2>
           <JobExecutionLogs jobId={job.id} />
+          <h2>Artifacts</h2>
+          <JobArtifacts job={job} />
         </>
       )}
     </div>

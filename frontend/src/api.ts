@@ -63,12 +63,9 @@ export function getJobLogs(jobId: string): Promise<JobLogEntry[]> {
   return request(`/api/jobs/${jobId}/logs`)
 }
 
-// filePath is whatever backend/api/routes/storyboard.py's shot loop stored
-// (a raw local filesystem path, OS-native separators) -- only the basename
-// is needed since job_id/shot_index are already known separately, and the
-// download route only ever looks up files by basename within a fixed
-// job_id/shot_index directory.
-export function downloadUrl(jobId: string, shotIndex: number, filePath: string): string {
-  const filename = filePath.split(/[\\/]/).pop() ?? filePath
+// ArtifactResponse.filename is already a clean basename (backend/api/routes/
+// storyboard.py's _artifact_from_path strips the raw local path server-side)
+// -- no client-side path-splitting needed here anymore.
+export function downloadUrl(jobId: string, shotIndex: number, filename: string): string {
   return `${API_BASE_URL}/api/jobs/${jobId}/files/${shotIndex}/${encodeURIComponent(filename)}`
 }

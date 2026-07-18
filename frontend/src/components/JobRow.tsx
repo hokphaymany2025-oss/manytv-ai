@@ -9,9 +9,14 @@ const RETRYABLE_STATUSES = new Set(['failed', 'cancelled'])
 interface Props {
   job: JobStatusResponse
   onChanged: (job: JobStatusResponse) => void
+  // Suppresses the per-file download links below each shot's status line --
+  // set false only from JobDetailPage, which renders the same files as rich
+  // previews in its own JobArtifacts section instead. Defaults true so the
+  // dashboard list view (which has no JobArtifacts section) is unaffected.
+  showFiles?: boolean
 }
 
-export function JobRow({ job, onChanged }: Props) {
+export function JobRow({ job, onChanged, showFiles = true }: Props) {
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -76,17 +81,18 @@ export function JobRow({ job, onChanged }: Props) {
                 shot {shot.shot_index}: {shot.status}
                 {shot.error ? ` — ${shot.error}` : ''}
               </span>
-              {shot.files?.map((file) => (
-                <a
-                  key={file}
-                  className="job-row__download"
-                  href={downloadUrl(job.id, shot.shot_index, file)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {file.split(/[\\/]/).pop()}
-                </a>
-              ))}
+              {showFiles &&
+                shot.files?.map((file) => (
+                  <a
+                    key={file.filename}
+                    className="job-row__download"
+                    href={downloadUrl(job.id, shot.shot_index, file.filename)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {file.filename}
+                  </a>
+                ))}
             </li>
           ))}
         </ul>
