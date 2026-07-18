@@ -1,10 +1,34 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (storyboard helper test-coverage session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (CI fix session — root cause of the long-standing GitHub Actions failure found and fixed). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (latest) — CI fixed: `pytest` invocation was never putting the repo root on `sys.path`
+
+**What was completed:** Continued from a "push pending commits + check CI" task. Both `cb090d7` and `0790c0a` turned out to already be on `origin/master` (nothing to push) — but checking GitHub's Actions API (unauthenticated REST, no `gh` CLI needed since this repo is public) surfaced a real, previously-unknown finding: **CI had failed on every single run since the workflow was created (4/4, run 1 through run 4), completely unrelated to any of this conversation's recent feature work.** The failing step, `pytest tests/ -v`, always exited code 2 in under a second — a collection error, not a real test failure.
+
+Spent a full turn ruling out hypotheses before getting the real traceback: not a `pytest>=8.0` floating-version issue (a fresh install still resolves 9.1.1 and passes locally), not stale local files or a missing `.env` (a byte-for-byte fresh `git clone` of `origin/master` also passed), and — the most thorough check — not OS-specific either (installed Python 3.12 natively in WSL Ubuntu and ran the real test suite there: 128 passed in 2.9s). Every local reproduction attempt passed, which turned out to be the tell, not a dead end.
+
+User then supplied the actual GitHub Actions traceback: `ModuleNotFoundError: No module named 'backend'` on every test file's import line. **Root cause:** `tests/` has no `__init__.py` and there's no `conftest.py` anywhere in the repo, so under pytest's default import mode, collecting a test file inserts only `tests/` onto `sys.path` — never the repo root — meaning `backend` (a real top-level package) is never importable. Every local reproduction this session used `python -m pytest`, and Python's own `-m` flag prepends the current working directory to `sys.path` before pytest even runs, silently papering over the gap. CI's workflow ran the bare `pytest tests/ -v` console-script instead (no `-m`), which has no such side effect — confirmed by reproducing the identical `ModuleNotFoundError` locally using the bare `pytest.exe` script instead of `python -m pytest`.
+
+**Fix applied — the smallest of several viable options, approved before making the change:** [.github/workflows/ci.yml:22](.github/workflows/ci.yml#L22) changed from `pytest tests/ -v` to `python -m pytest tests/ -v` — a one-line change, exactly matching the invocation this project's local testing has always used. Not touched: `requirements.txt`, any test file, any application code. Named but deliberately not applied (would close the gap more permanently but wasn't the smallest fix asked for): a root-level `conftest.py` or a `pytest.ini`/`pyproject.toml` `pythonpath = .` setting, which would fix this for *any* invocation style, not just CI's.
+
+- **Verification:** `python -m pytest tests/ -v` (project's own `.venv`) → **128 passed, 1 warning in 47.51s** — no regressions, no other files touched.
+
+**Files changed:** `.github/workflows/ci.yml` (one line), `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's change is not yet committed — waiting for approval before committing, per explicit instruction.**
+- Whether the fixed workflow actually goes green on GitHub still isn't directly confirmed (needs a real push to trigger it) — the fix is verified locally via the identical invocation, not yet observed passing on an actual GitHub-hosted runner.
+- The residual "bare `pytest` still breaks for anyone who doesn't type `-m`" gap is named above, not solved — a future session could add a root `conftest.py` or `pythonpath = .` if this becomes a recurring papercut.
+- All other previously-open low-priority items (SSE trade-offs, no log retention, un-cached artifact `stat()`, BUG-5, no dependency lockfile) unchanged, not in scope this session.
+
+**Exact next task:** Get approval, then commit this session's one-line `.github/workflows/ci.yml` fix. After that, push and confirm the workflow actually goes green on GitHub for the first time.
+
+---
 
 ### 2026-07-18 (yet later) — Test coverage extended to storyboard.py's pure helper functions
 
