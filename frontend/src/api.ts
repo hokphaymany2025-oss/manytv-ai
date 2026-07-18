@@ -69,3 +69,18 @@ export function getJobLogs(jobId: string): Promise<JobLogEntry[]> {
 export function downloadUrl(jobId: string, shotIndex: number, filename: string): string {
   return `${API_BASE_URL}/api/jobs/${jobId}/files/${shotIndex}/${encodeURIComponent(filename)}`
 }
+
+// SSE URL builders -- EventSource takes a plain URL, not a fetch() call, so
+// these mirror downloadUrl's "just build the string" shape rather than
+// request()'s fetch-and-parse one.
+export function jobEventsUrl(jobId: string): string {
+  return `${API_BASE_URL}/api/jobs/${jobId}/events`
+}
+
+export function jobLogsEventsUrl(jobId: string): string {
+  return `${API_BASE_URL}/api/jobs/${jobId}/logs/events`
+}
+
+export function allJobsEventsUrl(): string {
+  return `${API_BASE_URL}/api/jobs/events`
+}

@@ -1,10 +1,36 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (Job Output Artifacts session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (SSE migration session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (latest) — Frontend polling replaced with Server-Sent Events
+
+**What was completed:** Continued from `v1.0-job-artifacts` (HEAD `4ef7c15`, clean tree, 99/49 passing tests). Asked to design (not yet implement) an SSE migration answering an 11-point brief: where polling is used, which endpoints, what should stream, SSE vs. WebSocket, backend/frontend architecture, reconnection, failure handling, testing, migration plan, risks. Used Plan mode, dispatched a Plan agent specifically to pressure-test the trickiest backend mechanics before writing any code — it caught two real bugs in the draft: **(a)** publishing from inside `JobStore._run()`'s thread-dispatched sync callable would touch `asyncio.Queue` off the event-loop thread (unsafe, same class of bug as BUG-6 one layer up); **(b)** fetching an initial snapshot before subscribing would leave a gap where a change could be silently lost. Verified the agent's most load-bearing claims myself (installed `fastapi`/`starlette`/`anyio` versions, `JobStore`'s exact method list) before trusting them — both checked out. Wrote the full corrected design to the plan file and got it approved.
+
+Mid-implementation, found a third design gap myself (not the agent's): pushing per-job snapshots to the dashboard's all-jobs stream can't correctly express a job *leaving* a status-filtered view (the existing `updateJob` upsert helper can only add/replace, never remove) — a real regression vs. today's full-list-replace polling. Fixed by making that one stream signal-only ("something changed") and letting the client re-run its own already-correct, already-filtered `GET /api/jobs` fetch instead of trying to push granular per-job deltas there.
+
+A user message arrived mid-turn asking to "resume the project from a clean state review," seemingly unaware this work was already mid-flight and approved — paused immediately (cleanly stopped a dangling background Playwright process and the live dev servers, no orphaned processes), gave an honest status report reconciling the two, and asked directly whether to finish the already-approved SSE work first or set it aside. Confirmed: finish it first.
+
+- **Backend:** new `backend/core/events.py` (lock-free `EventBus`, `asyncio.Queue` per subscriber, bounded/drop-oldest). `JobStore` gained an optional `event_bus` param (defaults to a private instance, not the global singleton, so all ~20 existing `JobStore(Settings(...))` test call sites stay isolated) and a `_run_and_publish` wrapper all six mutating methods now use, publishing only after the threaded sqlite call returns (the fix for bug (a)). Three new SSE routes in `storyboard.py`: `/jobs/{id}/events` (full snapshot push), `/jobs/{id}/logs/events` (delta-only, real `Last-Event-ID` reconnect support), `/jobs/events` (signal-only, for the reason above). `app.py`'s CORS gained `Last-Event-ID` in `allow_headers` (this frontend is genuinely cross-origin; that header isn't CORS-safelisted, so reconnects would otherwise silently fail preflight). All three existing polling routes kept untouched, not removed. 15 new tests (7 `EventBus`, 8 SSE-route generator tests called directly, matching this repo's existing convention) — `python -m pytest tests/ -v` → **114 passed**.
+- **Frontend:** zero new dependencies (`EventSource` is native). All three hooks kept their exact return shape — **zero consuming components changed**. `useJobList` opens one persistent connection for its whole lifetime regardless of filter changes (a `refreshRef` indirection always calls the current, filter-respecting `refresh()`). `useJob` keeps its one-shot 404 existence check before opening a stream, guarded against a real unmount/jobId-change race with a `cancelled` flag. New `FakeEventSource` test doubles (hand-rolled, no mocking library) in each hook's test file. `npm run test` → **53 passed**. `npm run build` clean.
+
+**Live validation — the most thorough of any feature this project has shipped:** direct `curl` against all three SSE routes (including confirming `Last-Event-ID` correctly resumes from the right point). Real backend + real Vite dev server + Playwright: a new job appeared in the dashboard in under 1 second (not the old 3s ceiling); a real `generate_script` job's status/script/logs/timeline all updated live end-to-end (95s real Ollama run) with zero reloads, zero console errors. **Found a real bug live that neither planning nor unit tests caught**: `GET /api/jobs/events` was being swallowed by the pre-existing `GET /api/jobs/{job_id}` route (both 2 path segments, FastAPI matches registration order) — fixed by reordering. **Reconnection test**: killed the real backend process with a browser tab open, confirmed the same still-open tab's `EventSource` auto-reconnected (the `net::ERR_CONNECTION_RESET`/`REFUSED` console entries during the actual outage window are the correct, expected signature of this — not bugs), restarted the backend, submitted a new job via `curl`, confirmed the same tab picked it up with zero interaction.
+
+**Files changed:** `backend/core/events.py` (new), `backend/core/job_store.py`, `backend/api/routes/storyboard.py`, `backend/app.py`, `tests/test_events.py` (new), `tests/test_job_routes.py`, `frontend/src/api.ts`, `frontend/src/useJob.ts`(+test), `frontend/src/useJobList.ts`(+test), `frontend/src/useJobLogs.ts`(+test), `frontend/src/components/JobExecutionLogs.test.tsx`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- SSE's single-process assumption, the browser's 6-connection-per-origin cap, `EventSource`'s inability to set custom headers, and the 404-signaling compromise are all named explicitly in `TODO.md` as informational/low-priority, not solved.
+- Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed.
+- Un-cached per-artifact `stat()`, no retention/pruning for `job_logs`/`jobs`/`shots`, `storyboard.py`'s other pure functions still untested, BUG-5 (cosmetic), a dependency lockfile — all low priority, unchanged.
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
+- **This session's changes are not yet committed.**
+
+**Exact next task:** Commit this session's SSE migration changes (not yet done).
+
+---
 
 ### 2026-07-18 (later still) — Job Output Artifacts added
 
@@ -450,20 +476,20 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, Job Execution Logs, and Job Output Artifacts are all done and live-validated (see the `2026-07-18 (later still)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, Job Execution Logs, Job Output Artifacts, and (as of this session) a full migration from frontend polling to Server-Sent Events are all done and live-validated (see the `2026-07-18 (latest)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
 - **This repo has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
-- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's Job Output Artifacts changes were not yet committed** as of this entry.
+- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's SSE migration changes were not yet committed** as of this entry.
 - `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests, including two real jobs with genuine ComfyUI-produced `.mp4` files (`7ec76e91...`, `bc89fff6...`) useful for future live checks of anything artifact-related.
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
-- Backend: 99 tests passing (`python -m pytest tests/ -v`). Frontend: 49 tests passing (`cd frontend && npm run test`).
+- Backend: 114 tests passing (`python -m pytest tests/ -v`). Frontend: 53 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Commit this session's Job Output Artifacts changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
+**Exact next task:** Commit this session's SSE migration changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
 
 **Commands to resume:**
 ```powershell
 cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
-python -m pytest tests/ -v        # confirm still 99 passed
-cd frontend && npm run test       # confirm still 49 passed
+python -m pytest tests/ -v        # confirm still 114 passed
+cd frontend && npm run test       # confirm still 53 passed
 ```

@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useJobList } from './useJobList'
 import type { JobStatusResponse } from './types'
 
-vi.mock('./api', () => ({
-  listJobs: vi.fn(),
-}))
+vi.mock('./api', async () => {
+  const actual = await vi.importActual<typeof import('./api')>('./api')
+  return { ...actual, listJobs: vi.fn() }
+})
 
 import { listJobs } from './api'
 
@@ -39,12 +40,39 @@ const jobB: JobStatusResponse = {
   finished_at: 2.0,
 }
 
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  url: string
+  closed = false
+  private listeners: Record<string, ((event: MessageEvent<string>) => void)[]> = {}
+
+  constructor(url: string) {
+    this.url = url
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent<string>) => void) {
+    ;(this.listeners[type] ??= []).push(listener)
+  }
+
+  emit(type: string, data: unknown = {}) {
+    const event = { data: JSON.stringify(data) } as MessageEvent<string>
+    for (const listener of this.listeners[type] ?? []) listener(event)
+  }
+
+  close() {
+    this.closed = true
+  }
+}
+
 beforeEach(() => {
   vi.mocked(listJobs).mockReset()
+  FakeEventSource.instances = []
+  vi.stubGlobal('EventSource', FakeEventSource)
 })
 
 afterEach(() => {
-  vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('useJobList', () => {
@@ -57,28 +85,27 @@ describe('useJobList', () => {
     expect(listJobs).toHaveBeenCalledTimes(1)
   })
 
-  it('re-fetches on each poll interval', async () => {
-    // Fake timers must be active *before* the hook mounts, so the
-    // setInterval it registers is one vitest can actually control --
-    // waitFor's own real-timer-based polling isn't used in this test for
-    // exactly that reason; advanceTimersByTimeAsync(0) flushes the
-    // mount-time refresh()'s pending promise instead.
-    vi.useFakeTimers()
+  it('opens one persistent SSE connection to the all-jobs stream', async () => {
+    vi.mocked(listJobs).mockResolvedValue([jobA])
+
+    renderHook(() => useJobList())
+
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+    expect(FakeEventSource.instances[0].url).toContain('/api/jobs/events')
+  })
+
+  it('re-fetches when a job_updated SSE event arrives', async () => {
     vi.mocked(listJobs).mockResolvedValue([jobA])
 
     const { result } = renderHook(() => useJobList())
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-    expect(result.current.jobs).toEqual([jobA])
-    expect(listJobs).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(result.current.jobs).toEqual([jobA]))
 
     vi.mocked(listJobs).mockResolvedValue([jobADone])
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000)
+    act(() => {
+      FakeEventSource.instances[0].emit('job_updated')
     })
 
-    expect(result.current.jobs).toEqual([jobADone])
+    await waitFor(() => expect(result.current.jobs).toEqual([jobADone]))
     expect(listJobs).toHaveBeenCalledTimes(2)
   })
 
@@ -143,30 +170,26 @@ describe('useJobList', () => {
     await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith(undefined))
   })
 
-  it('the poll interval continues using the current filter after it changes', async () => {
-    vi.useFakeTimers()
+  it('an SSE event after the filter changes re-fetches with the new filter, without reopening the connection', async () => {
     vi.mocked(listJobs).mockResolvedValue([jobA])
 
     const { result } = renderHook(() => useJobList())
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-    expect(listJobs).toHaveBeenLastCalledWith(undefined)
+    await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith(undefined))
 
     vi.mocked(listJobs).mockResolvedValue([jobB])
     act(() => {
       result.current.setStatus('failed')
     })
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
-    })
-    expect(listJobs).toHaveBeenLastCalledWith('failed')
-    const callsAfterFilterChange = vi.mocked(listJobs).mock.calls.length
+    await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith('failed'))
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000)
+    expect(FakeEventSource.instances).toHaveLength(1) // not reopened by the filter change
+
+    vi.mocked(listJobs).mockResolvedValue([jobB, jobADone])
+    act(() => {
+      FakeEventSource.instances[0].emit('job_updated')
     })
-    expect(listJobs).toHaveBeenCalledTimes(callsAfterFilterChange + 1)
-    expect(listJobs).toHaveBeenLastCalledWith('failed')
+
+    await waitFor(() => expect(listJobs).toHaveBeenLastCalledWith('failed'))
+    expect(FakeEventSource.instances).toHaveLength(1)
   })
 })

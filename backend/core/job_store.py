@@ -33,6 +33,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from backend.core.config import Settings, get_settings
+from backend.core.events import EventBus, get_event_bus
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -76,7 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs (job_id, id);
 
 
 class JobStore:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, event_bus: Optional[EventBus] = None):
         db_path = settings.db_file_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -85,6 +86,12 @@ class JobStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._lock = threading.Lock()
+        # A private bus by default, NOT the global get_event_bus() singleton --
+        # every existing test constructs JobStore(Settings(...)) directly, and
+        # defaulting to the shared singleton would leak subscriptions across
+        # unrelated tests (many reuse the same literal job ids). Only
+        # get_job_store() below opts into the real shared bus.
+        self._events = event_bus or EventBus()
 
     async def _run(self, fn, /, *args: Any) -> Any:
         def locked_call() -> Any:
@@ -92,6 +99,18 @@ class JobStore:
                 return fn(*args)
 
         return await asyncio.to_thread(locked_call)
+
+    async def _run_and_publish(self, job_id: str, event_type: str, fn, /, *args: Any) -> Any:
+        """Wraps _run() for every state-mutating method, publishing only
+        after the sync call (and its commit) has already returned -- back on
+        the event loop thread, not the worker thread _run() dispatches onto.
+        Publishing from inside the threaded sync callable itself would touch
+        asyncio.Queue off the loop thread, which is not safe -- the same
+        shape of bug BUG-6 already found once in this file, one layer up.
+        """
+        result = await self._run(fn, *args)
+        self._events.publish(job_id, event_type)
+        return result
 
     # ---- jobs ----
 
@@ -116,8 +135,8 @@ class JobStore:
         workflow_name: Optional[str] = None,
         created_at: Optional[float] = None,
     ) -> None:
-        await self._run(
-            self._create_job_sync,
+        await self._run_and_publish(
+            job_id, "job_created", self._create_job_sync,
             job_id, kind, status, project_id, workflow_name, payload, created_at or time.time(),
         )
 
@@ -145,8 +164,8 @@ class JobStore:
         result: Optional[dict[str, Any]] = None,
         error: Optional[str] = None,
     ) -> None:
-        await self._run(
-            self._update_job_status_sync,
+        await self._run_and_publish(
+            job_id, "job_updated", self._update_job_status_sync,
             job_id, status, started_at, finished_at,
             json.dumps(result) if result is not None else None,
             error,
@@ -195,7 +214,7 @@ class JobStore:
         error message or a completed result from the last run doesn't linger
         on a job about to run again from a clean slate.
         """
-        await self._run(self._reset_job_for_retry_sync, job_id, status)
+        await self._run_and_publish(job_id, "job_updated", self._reset_job_for_retry_sync, job_id, status)
 
     # ---- shots ----
 
@@ -230,8 +249,8 @@ class JobStore:
         submitted_at: Optional[float] = None,
         finished_at: Optional[float] = None,
     ) -> None:
-        await self._run(
-            self._upsert_shot_sync,
+        await self._run_and_publish(
+            job_id, "job_updated", self._upsert_shot_sync,
             job_id, shot_index, status, prompt_id,
             json.dumps(files) if files is not None else None,
             error, submitted_at, finished_at,
@@ -264,7 +283,9 @@ class JobStore:
         deliberately keep going through _run_storyboard_job's existing
         history-reconcile-or-resubmit branch unmodified.
         """
-        await self._run(self._reset_shots_by_status_sync, job_id, from_status, to_status)
+        await self._run_and_publish(
+            job_id, "job_updated", self._reset_shots_by_status_sync, job_id, from_status, to_status,
+        )
 
     # ---- job logs ----
 
@@ -303,8 +324,9 @@ class JobStore:
         that captured value instead, so the persisted order reflects reality
         rather than when it happened to get flushed.
         """
-        await self._run(
-            self._add_job_log_sync, job_id, timestamp or time.time(), level, stage, message, shot_index,
+        await self._run_and_publish(
+            job_id, "log_added", self._add_job_log_sync,
+            job_id, timestamp or time.time(), level, stage, message, shot_index,
         )
 
     def _get_job_logs_sync(self, job_id: str) -> list[dict[str, Any]]:
@@ -319,4 +341,4 @@ class JobStore:
 
 @lru_cache
 def get_job_store() -> JobStore:
-    return JobStore(get_settings())
+    return JobStore(get_settings(), event_bus=get_event_bus())

@@ -24,12 +24,13 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi import Path as FastAPIPath
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings, get_settings
+from backend.core.events import EventBus, get_event_bus
 from backend.core.job_store import JobStore, get_job_store
 from backend.core.worker import Job, JobCancelled, JobStatus, LogLevel, LogStage, ShotStatus, worker
 from backend.models.schemas import (
@@ -379,9 +380,100 @@ async def _build_job_status_response(
     )
 
 
+# SSE keepalive interval -- sent as a comment line (ignored by EventSource,
+# just keeps the connection from looking idle to any intermediary) whenever
+# no real event arrives within this window. Also used as the wait_for
+# timeout that lets each stream periodically recheck request.is_disconnected().
+_SSE_KEEPALIVE_SECONDS = 15.0
+
+
+def _sse_frame(event_type: str, data: str, event_id: Optional[str] = None) -> str:
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event_type}")
+    lines.append(f"data: {data}")
+    return "\n".join(lines) + "\n\n"
+
+
+async def _all_jobs_events_stream(request: Request, bus: EventBus):
+    """A signal-only channel, deliberately NOT pushing per-job payloads like
+    the single-job streams do. A status-filtered dashboard view can both
+    gain AND lose jobs as they change (e.g. a `?status=failed` view must
+    drop a job the instant it's retried elsewhere) -- the frontend's
+    existing upsert-by-id helper (updateJob) can only add/replace, never
+    remove, so pushing individual job snapshots here can't correctly express
+    a job leaving the filtered view. Signaling "something changed" and
+    letting the client re-run its own already-correct, already-filtered
+    GET /api/jobs fetch (exactly what polling already does every 3s, just
+    now triggered instantly instead of on a timer) sidesteps that gap
+    entirely with no new merge logic.
+    """
+    queue = bus.subscribe(None)
+    try:
+        yield "retry: 3000\n\n"
+        yield _sse_frame("job_updated", "{}")
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            yield _sse_frame("job_updated", "{}")
+    finally:
+        bus.unsubscribe(None, queue)
+
+
+# Registered BEFORE GET /jobs/{job_id} below, deliberately: FastAPI/Starlette
+# matches routes in registration order, and both routes have exactly two
+# path segments ("jobs" + one more) -- if /jobs/{job_id} were registered
+# first, a request to /jobs/events would match it with job_id="events" and
+# 404, never reaching this route at all. Confirmed the hard way live (curl
+# against a real running backend) before this comment was written.
+@router.get("/jobs/events")
+async def all_jobs_events(request: Request) -> StreamingResponse:
+    return StreamingResponse(_all_jobs_events_stream(request, get_event_bus()), media_type="text/event-stream")
+
+
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(job_id: str) -> JobStatusResponse:
     return await _build_job_status_response(get_job_store(), job_id)
+
+
+async def _job_events_stream(request: Request, store: JobStore, job_id: str, bus: EventBus):
+    """Pushes the full JobStatusResponse (same shape GET /api/jobs/{id}
+    already returns) every time this job changes. Subscribes BEFORE the
+    first fetch -- deliberate: fetching first and subscribing after would
+    leave a gap where a change could fire and be silently missed, possibly
+    hanging the connection on a stale snapshot forever if that change was
+    the job's last one.
+    """
+    queue = bus.subscribe(job_id)
+    try:
+        yield "retry: 3000\n\n"
+        while True:
+            response = await _build_job_status_response(store, job_id)
+            yield _sse_frame("job_updated", response.model_dump_json())
+            if await request.is_disconnected():
+                break
+            try:
+                await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+    finally:
+        bus.unsubscribe(job_id, queue)
+
+
+@router.get("/jobs/{job_id}/events")
+async def job_events(request: Request, job_id: str) -> StreamingResponse:
+    store = get_job_store()
+    if await store.get_job(job_id) is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return StreamingResponse(
+        _job_events_stream(request, store, job_id, get_event_bus()), media_type="text/event-stream",
+    )
 
 
 @router.get("/jobs/{job_id}/logs", response_model=list[JobLogEntry])
@@ -402,6 +494,51 @@ async def get_job_logs(job_id: str) -> list[JobLogEntry]:
         )
         for r in rows
     ]
+
+
+async def _job_logs_events_stream(request: Request, store: JobStore, job_id: str, bus: EventBus):
+    """Pushes only new log rows (id greater than what's already been sent) --
+    unlike job_updated's full-snapshot push, log entries are deltas, so
+    resending the whole growing array on every wakeup would be wasteful and
+    misleading to a client that appends rather than replaces. Honors
+    Last-Event-ID on reconnect (job_logs.id is already a durable,
+    monotonically-increasing column, so this survives a backend restart mid-
+    job for free) -- without it, every reconnect would resend the entire
+    backlog, visibly duplicating lines in a client that appends.
+    """
+    queue = bus.subscribe(job_id)
+    last_id = int(request.headers.get("last-event-id") or 0)
+    try:
+        yield "retry: 3000\n\n"
+        while True:
+            rows = await store.get_job_logs(job_id)
+            for row in rows:
+                if row["id"] <= last_id:
+                    continue
+                last_id = row["id"]
+                entry = JobLogEntry(
+                    timestamp=row["timestamp"], level=row["level"], stage=row["stage"],
+                    message=row["message"], shot_index=row["shot_index"],
+                )
+                yield _sse_frame("log_added", entry.model_dump_json(), event_id=str(row["id"]))
+            if await request.is_disconnected():
+                break
+            try:
+                await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+    finally:
+        bus.unsubscribe(job_id, queue)
+
+
+@router.get("/jobs/{job_id}/logs/events")
+async def job_logs_events(request: Request, job_id: str) -> StreamingResponse:
+    store = get_job_store()
+    if await store.get_job(job_id) is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return StreamingResponse(
+        _job_logs_events_stream(request, store, job_id, get_event_bus()), media_type="text/event-stream",
+    )
 
 
 @router.get("/jobs", response_model=list[JobStatusResponse])

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from backend.api.routes import storyboard as storyboard_module
 from backend.core.config import Settings
+from backend.core.events import EventBus
 from backend.core.job_store import JobStore
 from backend.core.worker import Job, JobStatus, ShotStatus
 
@@ -508,3 +509,163 @@ def test_download_shot_file_rejects_invalid_filename_pattern_over_http():
     resp = client.get("/api/jobs/job-1/files/0/not a valid filename.mp4")
 
     assert resp.status_code == 422
+
+
+# ---- SSE events ----
+
+
+class _FakeRequest:
+    """Duck-typed stand-in for fastapi.Request -- the SSE generators only
+    ever call `await request.is_disconnected()` and read `request.headers`,
+    so a real ASGI scope is unnecessary for testing the generator directly
+    (matching this file's existing convention of calling route/helper
+    functions directly rather than driving a real TestClient)."""
+
+    def __init__(self, headers: dict[str, str] | None = None):
+        self.headers = headers or {}
+
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+def test_job_events_stream_yields_snapshot_then_update_on_publish(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "queued", {"prompt": "x"}, created_at=1.0)
+        gen = storyboard_module._job_events_stream(_FakeRequest(), store, "job-1", store._events)
+        await gen.__anext__()  # the leading "retry: 3000" comment line
+        first = await gen.__anext__()
+
+        await store.update_job_status("job-1", "running", started_at=2.0)
+        second = await gen.__anext__()
+
+        await gen.aclose()
+        return first, second
+
+    first, second = asyncio.run(scenario())
+
+    assert "event: job_updated" in first
+    assert '"status":"queued"' in first
+    assert '"status":"running"' in second
+
+
+def test_job_events_stream_unsubscribes_on_close(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "queued", {"prompt": "x"}, created_at=1.0)
+        gen = storyboard_module._job_events_stream(_FakeRequest(), store, "job-1", store._events)
+        await gen.__anext__()
+        await gen.aclose()
+        return store._events._subscribers.get("job-1", set())
+
+    remaining = asyncio.run(scenario())
+
+    assert remaining == set()
+
+
+def test_job_events_route_rejects_missing_job(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.job_events(_FakeRequest(), "does-not-exist"))
+
+    assert exc_info.value.status_code == 404
+
+
+def test_job_logs_events_stream_sends_only_new_rows(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        await store.add_job_log("job-1", "info", "job", "Starting job job-1.", timestamp=1.0)
+        gen = storyboard_module._job_logs_events_stream(_FakeRequest(), store, "job-1", store._events)
+        await gen.__anext__()  # the leading "retry: 3000" comment line
+        first = await gen.__anext__()
+
+        await store.add_job_log("job-1", "info", "job", "Job job-1 completed in 1.0s.", timestamp=2.0)
+        second = await gen.__anext__()
+
+        await gen.aclose()
+        return first, second
+
+    first, second = asyncio.run(scenario())
+
+    assert "Starting job job-1." in first
+    assert "Job job-1 completed in 1.0s." in second
+    assert "Starting job job-1." not in second  # the delta, not a resend of everything so far
+
+
+def test_job_logs_events_stream_honors_last_event_id_on_reconnect(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        await store.add_job_log("job-1", "info", "job", "first", timestamp=1.0)
+        await store.add_job_log("job-1", "info", "job", "second", timestamp=2.0)
+        logs = await store.get_job_logs("job-1")
+        first_log_id = logs[0]["id"]
+
+        # Simulate a reconnect that already saw the first log line.
+        gen = storyboard_module._job_logs_events_stream(
+            _FakeRequest(headers={"last-event-id": str(first_log_id)}), store, "job-1", store._events,
+        )
+        await gen.__anext__()  # the leading "retry: 3000" comment line
+        only_new = await gen.__anext__()
+        await gen.aclose()
+        return only_new
+
+    only_new = asyncio.run(scenario())
+
+    assert "second" in only_new
+    assert "first" not in only_new
+
+
+def test_job_logs_events_route_rejects_missing_job(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.job_logs_events(_FakeRequest(), "does-not-exist"))
+
+    assert exc_info.value.status_code == 404
+
+
+def test_all_jobs_events_stream_sends_initial_signal_then_one_per_change():
+    bus = EventBus()
+
+    async def scenario():
+        gen = storyboard_module._all_jobs_events_stream(_FakeRequest(), bus)
+        await gen.__anext__()  # the leading "retry: 3000" comment line
+        initial = await gen.__anext__()
+
+        bus.publish("job-1", "job_created")
+        second = await gen.__anext__()
+
+        await gen.aclose()
+        return initial, second
+
+    initial, second = asyncio.run(scenario())
+
+    assert "event: job_updated" in initial
+    assert "event: job_updated" in second
+
+
+def test_all_jobs_events_stream_unsubscribes_on_close():
+    bus = EventBus()
+
+    async def scenario():
+        gen = storyboard_module._all_jobs_events_stream(_FakeRequest(), bus)
+        await gen.__anext__()
+        await gen.aclose()
+        return bus._subscribers.get(None, set())
+
+    remaining = asyncio.run(scenario())
+
+    assert remaining == set()

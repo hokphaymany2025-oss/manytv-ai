@@ -60,7 +60,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_allowed_origins_list,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    # Last-Event-ID isn't a CORS-safelisted header -- EventSource sends it
+    # automatically on reconnect (see the SSE routes in storyboard.py), and
+    # without it listed here that reconnect gets CORS-preflight-rejected.
+    # Breaks silently only on reconnect, never on first connect (which sends
+    # no such header) -- e.g. the first time `uvicorn --reload` restarts
+    # mid-job.
+    allow_headers=["Content-Type", "Last-Event-ID"],
 )
 
 app.include_router(generate_script.router)
