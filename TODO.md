@@ -46,13 +46,13 @@ Newly identified this session:
 
 ### v1.2 roadmap (proposed phases — not yet approved, no work started)
 
-**Phase 1 — close the gaps this session's own CI investigation exposed** (small, low-risk, high-confidence):
-- Add a frontend job to `.github/workflows/ci.yml` (`npm ci && npm run test && npm run build && npm run lint`), parallel to the existing backend job.
-- Add a dependency lockfile — motivated by a concrete, recent example: the CI investigation two sessions ago was rooted in `requirements.txt`'s unbounded `pytest>=8.0` floor resolving to a much newer major version on a fresh install than what the long-lived local `.venv` had. `frontend/` already has `package-lock.json`; the backend has nothing equivalent.
-- (Optional, cheap) Refresh README's architecture tree to match the current file layout.
+**Phase 1 — close the gaps this session's own CI investigation exposed** (small, low-risk, high-confidence): **done**
+- ~~Add a frontend job to `.github/workflows/ci.yml`~~ — done (`cb84b1c`, "Add frontend CI validation").
+- ~~Add a dependency lockfile~~ — done (`cef06c7`, "Add backend dependency lockfile").
+- (Optional, cheap) Refresh README's architecture tree to match the current file layout — still open, not blocking.
 
 **Phase 2 — make existing, currently-invisible data useful:**
-- Surface `project_id` in the dashboard — a project filter mirroring `StatusFilter.tsx`'s existing, already-tested pattern, and/or grouping.
+- ~~Surface `project_id` in the dashboard~~ — **display done** (2026-07-18): `JobRow.tsx` now renders `project_id` as a badge when present, so it's visible on both the dashboard list and the job detail page (both reuse `JobRow`). A dedicated project **filter** mirroring `StatusFilter.tsx`'s pattern (and/or grouping) was intentionally out of scope for this pass and remains open if wanted later.
 - Retry/cancel attempt history (a genuinely new append-only events table) — the one item on this whole list that needs real new schema/design work, not just exposing data that already exists.
 
 **Phase 3 — code health:**
@@ -67,13 +67,13 @@ Newly identified this session:
 
 ### Recommended next features (concrete, prioritized)
 
-1. **Frontend CI job** — smallest, highest-confidence, directly motivated by this session's own CI debugging experience.
-2. **Dependency lockfile** — same motivation, closes the exact class of gap that made the CI bug possible.
-3. **`project_id` dashboard filter** — smallest genuinely new user-facing feature; reuses an existing, already-tested UI pattern.
+1. ~~**Frontend CI job**~~ — done (`cb84b1c`).
+2. ~~**Dependency lockfile**~~ — done (`cef06c7`).
+3. ~~**`project_id` dashboard display**~~ — done (2026-07-18, `JobRow.tsx` badge). The filter/grouping half of the original idea is still open, not done — see Phase 2 above.
 4. **`storyboard.py` refactor** — no behavior change, pure maintainability investment now that the file has stopped growing (SSE, artifacts, and logs all landed inside it across the last several milestones).
 5. **Retry/cancel attempt history** — the most substantial single feature left on this list; needs its own dedicated plan before implementation.
 
-Recommendation: start with #1. It's small, directly motivated by a real incident this project just went through (the CI investigation), and closes a real blind spot before anything else in v1.2 gets built on top of a frontend that CI never actually verifies.
+Recommendation: next up is either #4 (refactor, no behavior change, lowest risk) or #5 (retry/cancel history, the most substantial remaining feature) — both independent of each other.
 
 ---
 
@@ -133,9 +133,11 @@ Recommendation: start with #1. It's small, directly motivated by a real incident
 - [x] **Test coverage extended to `storyboard.py`'s pure helper functions (2026-07-18):** `_naive_shot_split`/`_apply_shot_to_workflow` were previously only exercised indirectly through `_run_storyboard_job` integration-style tests — new `tests/test_storyboard_helpers.py` (14 cases) tests them directly: empty/whitespace-only scripts, blank lines skipped without leaving a gap in shot indices, sequential zero-based index assignment, per-line whitespace stripping, case-insensitive `CLIPTextEncode` title matching (`"POSITIVE"`, `"  Positive  "`, etc.), the documented "empty `negative_prompt` doesn't clobber the workflow's own default" behavior, non-`CLIPTextEncode`/unrecognized-title/missing-`_meta` nodes all correctly left untouched, and confirming `_apply_shot_to_workflow`'s deep-copy actually leaves the original workflow dict unmutated (not just a copy that happens to look unchanged — verified the *patched* copy's text really did change while the original's didn't). **All 14 passed against the existing implementation with zero production code changes needed** — every documented behavior held. `python -m pytest tests/ -v` → **128 passed**. Closes the last remaining item from `TODO.md`'s "Recommended next steps."
 - [x] **Job Detail page added (2026-07-17):** first real routing in this frontend — added `react-router-dom` (confirmed with the user first: real URL-based routing over a no-dependency in-page toggle, and timestamps explicitly deferred to a later pass since `JobStatusResponse` doesn't expose them and this one didn't need backend changes). `App.tsx` became route definitions (`/` → new `pages/DashboardPage.tsx`, holding the old `App.tsx` body verbatim; `/jobs/:id` → new `pages/JobDetailPage.tsx`); `main.tsx` wraps in `<BrowserRouter>`. New `useJob.ts` (single-job counterpart to `useJobList.ts` — same 3s-poll shape, same "keep last-known state on a transient failure" resilience) additionally tracks `notFound`: a confirmed 404 stops issuing further polls (a job that doesn't exist will never start existing). `JobDetailPage` **reuses `<JobRow>` directly** (wrapped in `<ul className="job-list">` so the bare `<li>` doesn't show a bullet marker) rather than duplicating its status/error/script/shots/retry/cancel/download rendering — the detail page's value is the real per-job URL, not a different visual treatment. `JobRow.tsx` gained a `<Link to="/jobs/:id">` on the job id as the entry point. Small, well-justified `api.ts` addition: `request()` now throws a typed `ApiError` (carries `.status`) instead of a plain `Error`, so `useJob` can check `err.status === 404` as a real property rather than string-matching the message — first time this distinction was actually needed. Tests: `useJob.test.tsx` (new, 4 cases — initial fetch, interval re-fetch, transient-failure resilience, 404 stops further polling) and `api.test.ts` (+1, `ApiError.status` on a 404) — `npm run test` → 15 passed. `npm run build` clean. **Live-validated**: clicking a job's id from the dashboard navigates to `/jobs/<id>` (URL confirmed), browser back button returns to `/`, a **hard refresh while on `/jobs/<id>`** renders correctly (confirms Vite's dev server SPA-fallback works, the one risk in this feature that depended on tooling behavior rather than app code), navigating directly to a fabricated id shows "Job not found." instead of an infinite loading state, and clicking Retry on a real failed job from the detail page correctly flipped its status (`failed` → `running`), proving the reused `JobRow`/`useJob.updateJob` wiring works standalone.
 
+- [x] **`project_id` exposed in the dashboard (2026-07-18, Phase 2.1):** backend already returned `project_id` on `JobStatusResponse` (Job Manager milestone) and the frontend already typed it (`types.ts`) and collected it in both submit forms — it was captured and persisted but never rendered anywhere. `JobRow.tsx` now renders `job.project_id` as a small badge in the row header (next to kind/id/status), only when non-null; new `.job-row__project` style in `App.css` matches the existing `.job-row__kind`/`.job-row__status` badge conventions. Since both the dashboard list and the job detail page already reuse `JobRow`, this surfaces it in both places from one change — no page-level edits needed. New `frontend/src/components/JobRow.test.tsx` (2 cases: badge renders when `project_id` is set, no badge/no stray element when `null`) — `JobRow` had no dedicated test file before this. `npm run test` → **55 passed** (53 prior + 2 new). `npm run build` clean, `npm run lint` clean (2 pre-existing warnings in unrelated files unaffected). No backend changes needed. Deliberately out of scope: a project-based filter/grouping control (mirroring `StatusFilter.tsx`) — display only, per the task's stated scope; still open in Phase 2 above if wanted later.
+
 ## Current tasks [ ]
 
-- [ ] **v1.2 development, planning stage.** All backend/frontend work through `v1.1.1-ci-fix` is committed, pushed, and CI-confirmed green (see the CI-fix Session Log entry — `b1c9981` was the first passing GitHub Actions run). Current branch `feature/v1.2-development` (one commit ahead of `master`: `b657f5b`, adds `pytest.ini`) carries this file's "v1.2 Planning" section (architecture review, current limitations, 4-phase roadmap) — analysis-only, verified accurate against the live repo, still awaiting approval to commit. No v1.2 feature work has started. Recommended entry point once approved: Phase 1 item 1, a frontend CI job.
+- [ ] **v1.2 development, Phase 2 in progress.** Phase 1 (frontend CI job, backend dependency lockfile) and Phase 2.1 (`project_id` display) are done — see "Completed" above. Remaining Phase 2 item: retry/cancel attempt history (needs its own design pass, not started). Phases 3-4 not started; Phase 4 explicitly gated on revisiting BUG-3's localhost-only scope decision.
 
 ---
 

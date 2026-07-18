@@ -1,16 +1,59 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (v1.2 planning session — full architecture/feature/gap analysis, no application code touched, working tree still has the analysis staged for commit). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (Phase 2.1 — `project_id` exposed in the dashboard UI). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (Phase 2.1) — `project_id` exposed in the dashboard, display only
+
+**What was completed:** Continued v1.2 Phase 2's first item. Investigated before touching anything: `project_id` was already fully plumbed on the backend (`JobStatusResponse.project_id`, persisted in `job_store.py`, passed through by both `generate_script.py` and `storyboard.py` since the original Job Manager milestone) and already typed on the frontend (`types.ts`, both submit forms already collect it) — the only gap was that it was never actually rendered anywhere, exactly as `TODO.md`'s v1.2 analysis had named it. Scope was deliberately narrowed to display only (not the project-filter/grouping half of the original roadmap idea), confirmed with the user before implementing.
+
+- `frontend/src/components/JobRow.tsx`: renders `job.project_id` as a small badge in the row header (between the job id link and the status badge), only when non-null. Since both `DashboardPage` and `JobDetailPage` already reuse `JobRow` directly, this surfaces `project_id` in both places from one change — no page-level edits needed.
+- `frontend/src/App.css`: new `.job-row__project` style, matching the existing `.job-row__kind`/`.job-row__status` badge conventions rather than inventing a new visual pattern.
+- `frontend/src/components/JobRow.test.tsx` (new): `JobRow` had no dedicated test file before this session (confirmed by grep — not referenced by any `*.test.*`) despite being the component both the dashboard and detail page depend on. 2 cases: badge renders when `project_id` is set, no badge/no stray `.job-row__project` element when `null`. Needed a `MemoryRouter` wrapper (first test file to need one) since `JobRow` renders a `react-router-dom` `<Link>`.
+- No backend changes — confirmed unnecessary before starting.
+
+**Validation:** `npm run test` → **55 passed** (53 prior + 2 new, 10 test files). `npm run build` → clean. `npm run lint` → clean except 2 pre-existing warnings in unrelated files (`JobArtifacts.tsx`, `JobTimeline.tsx`, both predate this session) — nothing from these changes. Backend suite unaffected (no backend files touched); last confirmed at 128 passed earlier this branch.
+
+**Also cleaned up this session:** an out-of-band, uncommitted `SESSION_STATE.md` edit was found already sitting in the working tree from before this session started — a "v1.2 Phase 1 CI and dependency improvements" entry using a different heading level (`##` instead of this file's `###` convention) and a literal `<lockfile commit hash>` placeholder never filled in. Its content was accurate (frontend CI job and backend lockfile were both genuinely done — confirmed via `git log`: `cb84b1c` "Add frontend CI validation", `cef06c7` "Add backend dependency lockfile"), so it was corrected in place (heading level fixed, placeholder filled with the real hash) rather than deleted, immediately below this entry.
+
+**Files changed:** `frontend/src/components/JobRow.tsx`, `frontend/src/App.css`, `frontend/src/components/JobRow.test.tsx` (new), `TODO.md`, `SESSION_STATE.md`. No backend files.
+
+**Remaining problems / blockers:** None blocking.
+- The project-filter/grouping half of the original `project_id` roadmap idea (a `<select>` mirroring `StatusFilter.tsx`) is still open, deliberately not built this pass.
+- Retry/cancel attempt history (Phase 2's other item) not started — needs its own design pass.
+- Phase 3 (`storyboard.py` refactor, coverage measurement) and Phase 4 (deeper capability work, gated on revisiting BUG-3's scope) not started.
+- Nothing committed yet — waiting for approval.
+
+**Exact next task:** Get approval to commit this session's changes (`JobRow.tsx`, `App.css`, `JobRow.test.tsx`, `TODO.md`, `SESSION_STATE.md`) on `feature/v1.2-development`. Once approved and ready to keep building: `storyboard.py`'s four-way refactor (Phase 3) and retry/cancel attempt history (Phase 2's remaining item) are the two independent next candidates — see `TODO.md`'s "Recommended next features" for the current tradeoff read.
+
+---
+
+### 2026-07-18 (Phase 1) — Frontend CI job + backend dependency lockfile
+
+**What was completed:** Phase 1 of the v1.2 roadmap — the smallest, most directly evidence-based items, both closing gaps the CI-fix session's own incident had exposed.
+
+- Added a frontend job to `.github/workflows/ci.yml`, parallel to the existing backend job: `npm ci && npm test && npm run build && npm run lint`. Closes the "CI never runs the frontend at all" gap named in the v1.2 kickoff analysis below.
+- Added a backend dependency lockfile (`requirements.lock.txt`) — motivated by the CI-fix incident, where `requirements.txt`'s unbounded `pytest>=8.0` floor resolved to a different version on a fresh install than the long-lived local `.venv` had.
+- Confirmed `pytest` (bare, no `-m`) now works directly from the repo root thanks to `pytest.ini`'s `pythonpath = .` (added the session before, `b657f5b`).
+- Backend suite confirmed still green: **128 passed**.
+
+**Commits:** `cb84b1c` — "Add frontend CI validation"; `cef06c7` — "Add backend dependency lockfile".
+
+**Remaining problems / blockers:** None blocking. Next up per the roadmap: Phase 2 (`project_id` display — see the entry above, done next session) and, independently, the optional README architecture-tree refresh named in Phase 1 (still open, non-blocking).
+
+**Exact next task:** Phase 2.1 (`project_id` in the dashboard) — done in the entry above.
+
+---
 
 ### 2026-07-18 (v1.2 kickoff) — Architecture/feature/gap analysis for v1.2, no code changed
 
 **What was completed:** Picked up from the CI-fix session's "Exact next task" (create `v1.1.1-ci-fix`, then start v1.2). Found the release tag already existed (`v1.1.1-ci-fix` on `b1c9981`) and a `feature/v1.2-development` branch already checked out, one commit ahead of `master` (`b657f5b`, "Fix pytest import path for local development" — adds `pytest.ini` with `pythonpath = .`, closing the "bare `pytest` still needs `-m`" residual gap named in the CI-fix entry). `TODO.md` already had a full, detailed "v1.2 Planning" section written (architecture review, current limitations, a 4-phase roadmap, 5 prioritized recommended next features) — but it existed only as an **uncommitted working-tree change** (`git diff` showed it as the entire delta on `TODO.md`), with no corresponding `SESSION_STATE.md` entry. This looked like a prior session's analysis pass that was cut off before its bookkeeping step (commit + session-state update), likely lost to a context compaction — so this session's job was to verify that existing analysis is still accurate rather than write a new one from scratch, then close the loop.
 
 **Verification performed (all claims in `TODO.md`'s "v1.2 Planning" section checked against the live repo, not taken on faith):**
+
 - Backend per-file line counts: `wc -l` on all 12 listed backend files matches exactly (`app.py` 78, `config.py` 80, `comfyui_client.py` 153, `llm_client.py` 82, `worker.py` 226, `job_store.py` 344, `events.py` 68, `recovery.py` 146, `gpu_memory.py` 33, `generate_script.py` 58, **`storyboard.py` 653** — confirmed as the largest file by a wide margin, `schemas.py` 102) — total 2023 lines, matching the claimed "~2000."
 - Frontend: `frontend/src/**/*.{ts,tsx}` excluding tests totals 868 lines, matching the claimed "~870."
 - Tests: `python -m pytest tests/ -v` → **128 passed** (backend); `cd frontend && npm run test` → **53 passed, 9 files** (frontend) — both exactly as claimed, both still 100% green on this branch.
@@ -20,6 +63,7 @@
 - No stale claims found — every checked number in the analysis held exactly. **No changes made to `TODO.md`'s existing v1.2 Planning content** since it was already accurate; this session's contribution is the verification itself plus this session-state entry.
 
 **Summary of the analysis now sitting in `TODO.md` (for a reader who wants it without opening that file):**
+
 1. **Architecture** — FastAPI backend (~2000 lines) orchestrating separately-running ComfyUI + Ollama over one shared 8GB-GPU worker slot; SQLite persistence with an SSE event bus layered on top; React+Vite+TS frontend (~870 lines) with zero polling left, three `EventSource`-backed hooks. `storyboard.py` (653 lines) is the one file doing routes + business logic + SSE + artifact-metadata all at once.
 2. **Existing features** — essentially everything through the "Job Output Artifacts"/SSE milestones: script generation, storyboard generation, job persistence + crash resume, retry/cancel, list/filter/detail-page/timeline/execution-logs/artifact-preview UI, all backend-tested (128 cases) and frontend-tested (53 cases), CI-gated (backend only).
 3. **Missing capabilities (newly identified this analysis, beyond what was already tracked)** — CI doesn't run the frontend suite at all; `project_id` is captured and persisted but never surfaced in the UI (write-only field); no code coverage measurement on either side; README's architecture tree is stale (predates `job_store.py`/`recovery.py`/`events.py`/`llm_client.py`/`frontend/`/`tests/`/`pytest.ini`); two UX-visible cancellation gaps (`generate_script` can't be cancelled mid-run; ComfyUI cancellation is cooperative-only, never `/interrupt`-based).
@@ -28,6 +72,7 @@
 **Files changed:** `SESSION_STATE.md` only (this entry). `TODO.md`'s v1.2 Planning section was already present in the working tree from before this session and is unchanged by it — still uncommitted.
 
 **Remaining problems / blockers:** None blocking.
+
 - **`TODO.md`'s v1.2 Planning section and this `SESSION_STATE.md` entry are both still uncommitted** — same working-tree state as found at the start of this session, now verified accurate. Per this project's standing convention (seen throughout the Session Log), commits wait for explicit user approval rather than happening automatically.
 - No v1.2 feature work has started yet — this was an analysis-only pass, per explicit instruction not to modify application code.
 - All previously-tracked bugs/gaps (BUG-5 cosmetic, no lockfile, no log/job retention, un-cached artifact `stat()`, the SSE informational trade-offs, no retry/cancel history) remain open and unchanged, same as listed in `TODO.md`.
@@ -45,7 +90,7 @@ Spent a full turn ruling out hypotheses before getting the real traceback: not a
 
 User then supplied the actual GitHub Actions traceback: `ModuleNotFoundError: No module named 'backend'` on every test file's import line. **Root cause:** `tests/` has no `__init__.py` and there's no `conftest.py` anywhere in the repo, so under pytest's default import mode, collecting a test file inserts only `tests/` onto `sys.path` — never the repo root — meaning `backend` (a real top-level package) is never importable. Every local reproduction this session used `python -m pytest`, and Python's own `-m` flag prepends the current working directory to `sys.path` before pytest even runs, silently papering over the gap. CI's workflow ran the bare `pytest tests/ -v` console-script instead (no `-m`), which has no such side effect — confirmed by reproducing the identical `ModuleNotFoundError` locally using the bare `pytest.exe` script instead of `python -m pytest`.
 
-**Fix applied — the smallest of several viable options, approved before making the change:** [.github/workflows/ci.yml:22](.github/workflows/ci.yml#L22) changed from `pytest tests/ -v` to `python -m pytest tests/ -v` — a one-line change, exactly matching the invocation this project's local testing has always used. Not touched: `requirements.txt`, any test file, any application code. Named but deliberately not applied (would close the gap more permanently but wasn't the smallest fix asked for): a root-level `conftest.py` or a `pytest.ini`/`pyproject.toml` `pythonpath = .` setting, which would fix this for *any* invocation style, not just CI's.
+**Fix applied — the smallest of several viable options, approved before making the change:** [.github/workflows/ci.yml:22](.github/workflows/ci.yml#L22) changed from `pytest tests/ -v` to `python -m pytest tests/ -v` — a one-line change, exactly matching the invocation this project's local testing has always used. Not touched: `requirements.txt`, any test file, any application code. Named but deliberately not applied (would close the gap more permanently but wasn't the smallest fix asked for): a root-level `conftest.py` or a `pytest.ini`/`pyproject.toml` `pythonpath = .` setting, which would fix this for _any_ invocation style, not just CI's.
 
 - **Verification:** `python -m pytest tests/ -v` (project's own `.venv`) → **128 passed, 1 warning in 47.51s** — no regressions, no other files touched.
 - **Committed** as `b1c9981` — "Fix GitHub Actions pytest module path" (2 files, +26/-2).
@@ -54,6 +99,7 @@ User then supplied the actual GitHub Actions traceback: `ModuleNotFoundError: No
 **Files changed:** `.github/workflows/ci.yml` (one line), `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking. **CI milestone fully closed** — this was the last "never actually confirmed working" item that had been carried in every session's blockers list since CI was first added.
+
 - The residual "bare `pytest` still breaks for anyone who doesn't type `-m`" gap is named above, not solved — a future session could add a root `conftest.py` or `pythonpath = .` if this becomes a recurring papercut.
 - No release tag yet for the work since `v1.1-sse` (`0790c0ad44`) — `cb090d7` (SSE), `0790c0a` (storyboard helper tests), and now `b1c9981` (this CI fix) are all untagged. Recommended, not yet created: **`v1.1.1-ci-fix`** (patch-level, since this is an infra/tooling fix rather than a new feature — the existing tags are all feature milestones).
 - All other previously-open low-priority items (SSE trade-offs, no log retention, un-cached artifact `stat()`, BUG-5, no dependency lockfile) unchanged, not in scope this session.
@@ -66,12 +112,13 @@ User then supplied the actual GitHub Actions traceback: `ModuleNotFoundError: No
 
 **What was completed:** Resumed via the user's standard "read TODO.md/SESSION_STATE.md, confirm git state, summarize, recommend next task, wait for approval" checklist. Confirmed HEAD `cb090d7` (the prior session's SSE migration, already committed), clean tree, 114/53 passing tests — and corrected a stale claim in this file's own "Recommended entry point" section, which still said the SSE changes "were not yet committed" even though they were, one turn earlier in the same conversation. `TODO.md`'s own backlog was down to bookkeeping/accepted-tradeoff items except one genuine leftover: direct test coverage for `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` (item 13, previously only exercised indirectly via `_run_storyboard_job`). Presented that as the recommended next task alongside two smaller non-coding loose ends (push `cb090d7` to `origin`; confirm CI fires) and waited for direction — user confirmed item 13.
 
-- **New `tests/test_storyboard_helpers.py`** (14 cases, no async/store/worker dependencies needed since both functions are plain synchronous helpers): `_naive_shot_split` — empty script, whitespace-only script, blank lines skipped without leaving a gap in the assigned indices, sequential zero-based index assignment, per-line whitespace stripping, `description`/`prompt` set equal with `negative_prompt` always empty. `_apply_shot_to_workflow` — positive-node text set from `shot.prompt`, case-insensitive `CLIPTextEncode` title matching (`"POSITIVE"`, `"  Positive  "`, mixed case), the documented "an empty `shot.negative_prompt` must not clobber the workflow's own default negative text" behavior, three separate no-op cases (non-`CLIPTextEncode` node, `CLIPTextEncode` with an unrecognized title, `CLIPTextEncode` missing `_meta` entirely), and confirming the deep-copy invariant — the *original* workflow dict's text is unchanged after the call while the *returned* copy's text really did change (not just a no-op copy that happens to look identical).
+- **New `tests/test_storyboard_helpers.py`** (14 cases, no async/store/worker dependencies needed since both functions are plain synchronous helpers): `_naive_shot_split` — empty script, whitespace-only script, blank lines skipped without leaving a gap in the assigned indices, sequential zero-based index assignment, per-line whitespace stripping, `description`/`prompt` set equal with `negative_prompt` always empty. `_apply_shot_to_workflow` — positive-node text set from `shot.prompt`, case-insensitive `CLIPTextEncode` title matching (`"POSITIVE"`, `"  Positive  "`, mixed case), the documented "an empty `shot.negative_prompt` must not clobber the workflow's own default negative text" behavior, three separate no-op cases (non-`CLIPTextEncode` node, `CLIPTextEncode` with an unrecognized title, `CLIPTextEncode` missing `_meta` entirely), and confirming the deep-copy invariant — the _original_ workflow dict's text is unchanged after the call while the _returned_ copy's text really did change (not just a no-op copy that happens to look identical).
 - **Zero production code changes** — every one of the 14 tests passed against the existing implementation on the first run; every documented/assumed behavior held exactly as `storyboard.py`'s own code comments already described. `python -m pytest tests/ -v` → **128 passed** (114 prior + 14 new).
 
 **Files changed:** `tests/test_storyboard_helpers.py` (new), `TODO.md`, `SESSION_STATE.md`. No backend/frontend source files touched. No live services needed or started — pure unit-test work.
 
 **Remaining problems / blockers:** None blocking.
+
 - Commit `cb090d7` (last session's SSE migration) still hasn't been pushed to `origin`.
 - Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed.
 - All the SSE-related informational/accepted-tradeoff items from the last session (single-process assumption, browser connection cap, no custom SSE headers, the 404-signaling compromise), no retention/pruning for `job_logs`, and un-cached per-artifact `stat()` remain open by design — none were in scope for this session.
@@ -85,7 +132,7 @@ User then supplied the actual GitHub Actions traceback: `ModuleNotFoundError: No
 
 **What was completed:** Continued from `v1.0-job-artifacts` (HEAD `4ef7c15`, clean tree, 99/49 passing tests). Asked to design (not yet implement) an SSE migration answering an 11-point brief: where polling is used, which endpoints, what should stream, SSE vs. WebSocket, backend/frontend architecture, reconnection, failure handling, testing, migration plan, risks. Used Plan mode, dispatched a Plan agent specifically to pressure-test the trickiest backend mechanics before writing any code — it caught two real bugs in the draft: **(a)** publishing from inside `JobStore._run()`'s thread-dispatched sync callable would touch `asyncio.Queue` off the event-loop thread (unsafe, same class of bug as BUG-6 one layer up); **(b)** fetching an initial snapshot before subscribing would leave a gap where a change could be silently lost. Verified the agent's most load-bearing claims myself (installed `fastapi`/`starlette`/`anyio` versions, `JobStore`'s exact method list) before trusting them — both checked out. Wrote the full corrected design to the plan file and got it approved.
 
-Mid-implementation, found a third design gap myself (not the agent's): pushing per-job snapshots to the dashboard's all-jobs stream can't correctly express a job *leaving* a status-filtered view (the existing `updateJob` upsert helper can only add/replace, never remove) — a real regression vs. today's full-list-replace polling. Fixed by making that one stream signal-only ("something changed") and letting the client re-run its own already-correct, already-filtered `GET /api/jobs` fetch instead of trying to push granular per-job deltas there.
+Mid-implementation, found a third design gap myself (not the agent's): pushing per-job snapshots to the dashboard's all-jobs stream can't correctly express a job _leaving_ a status-filtered view (the existing `updateJob` upsert helper can only add/replace, never remove) — a real regression vs. today's full-list-replace polling. Fixed by making that one stream signal-only ("something changed") and letting the client re-run its own already-correct, already-filtered `GET /api/jobs` fetch instead of trying to push granular per-job deltas there.
 
 A user message arrived mid-turn asking to "resume the project from a clean state review," seemingly unaware this work was already mid-flight and approved — paused immediately (cleanly stopped a dangling background Playwright process and the live dev servers, no orphaned processes), gave an honest status report reconciling the two, and asked directly whether to finish the already-approved SSE work first or set it aside. Confirmed: finish it first.
 
@@ -97,6 +144,7 @@ A user message arrived mid-turn asking to "resume the project from a clean state
 **Files changed:** `backend/core/events.py` (new), `backend/core/job_store.py`, `backend/api/routes/storyboard.py`, `backend/app.py`, `tests/test_events.py` (new), `tests/test_job_routes.py`, `frontend/src/api.ts`, `frontend/src/useJob.ts`(+test), `frontend/src/useJobList.ts`(+test), `frontend/src/useJobLogs.ts`(+test), `frontend/src/components/JobExecutionLogs.test.tsx`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - SSE's single-process assumption, the browser's 6-connection-per-origin cap, `EventSource`'s inability to set custom headers, and the 404-signaling compromise are all named explicitly in `TODO.md` as informational/low-priority, not solved.
 - Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed.
 - Un-cached per-artifact `stat()`, no retention/pruning for `job_logs`/`jobs`/`shots`, `storyboard.py`'s other pure functions still untested, BUG-5 (cosmetic), a dependency lockfile — all low priority, unchanged.
@@ -119,6 +167,7 @@ A user message arrived mid-turn asking to "resume the project from a clean state
 **Files changed:** `backend/models/schemas.py`, `backend/api/routes/storyboard.py`, `tests/test_job_routes.py`, `frontend/src/types.ts`, `frontend/src/api.ts`, `frontend/src/formatBytes.ts` (new), `frontend/src/formatBytes.test.ts` (new), `frontend/src/components/JobArtifacts.tsx` (new), `frontend/src/components/JobArtifacts.test.tsx` (new), `frontend/src/components/JobRow.tsx`, `frontend/src/components/JobTimeline.test.ts` (fixture fix only), `frontend/src/pages/JobDetailPage.tsx`, `frontend/src/App.css`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - Un-cached per-`stat()` cost on every job-status poll (new, low priority — see `TODO.md`).
 - Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed.
 - No retention/pruning for `job_logs`/`jobs`/`shots`; `storyboard.py`'s other pure functions still lack direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
@@ -143,6 +192,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Files changed:** `backend/core/job_store.py`, `backend/core/worker.py`, `backend/api/routes/storyboard.py`, `backend/core/comfyui_client.py`, `backend/core/recovery.py`, `backend/api/routes/generate_script.py`, `backend/models/schemas.py`, `tests/test_job_store.py`, `tests/test_job_routes.py`, `tests/test_worker.py`, `tests/test_recovery.py`, `tests/test_comfyui_client.py`, `frontend/src/types.ts`, `frontend/src/api.ts`, `frontend/src/api.test.ts`, `frontend/src/useJobLogs.ts` (new), `frontend/src/useJobLogs.test.tsx` (new), `frontend/src/components/JobExecutionLogs.tsx` (new), `frontend/src/components/JobExecutionLogs.test.tsx` (new), `frontend/src/pages/JobDetailPage.tsx`, `frontend/src/App.css`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed (no `gh`/web access this session).
 - No retention/pruning for `job_logs` (new, low priority — same gap `jobs`/`shots` already have, `job_logs` just grows faster per job).
 - `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
@@ -160,11 +210,12 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 - **Backend:** `backend/models/schemas.py` — `JobStatusResponse` gained `created_at`/`started_at`/`finished_at`, `ShotStatusResponse` gained `created_at`/`submitted_at`/`finished_at`. `backend/api/routes/storyboard.py::_build_job_status_response` (shared by all four job routes) now passes them through. Tests: `tests/test_job_routes.py` +2 (job-level and shot-level round-trip through `get_job_status`) — `python -m pytest tests/ -v` → 80 passed.
 - **Frontend:** new `frontend/src/formatTime.ts` (`formatAbsolute`/`formatRelative`) and `frontend/src/components/JobTimeline.tsx` (pure `buildTimelineEvents(job)`, tested in isolation, plus the rendering component). Rendered on `JobDetailPage.tsx` below the existing `<JobRow>`. `types.ts` mirrors the six new fields; updated three existing test fixtures (`api.test.ts`, `useJob.test.tsx`, `useJobList.test.tsx`) since the new fields are non-optional on the TS interface. Tests: `formatTime.test.ts` (6) + `JobTimeline.test.ts` (6, including a chronological-interleaving case with mixed job/shot timestamps) — `npm run test` → 27 passed (15 prior + 12 new). `npm run build` clean.
 
-**Live validation:** started a real backend + real Vite dev server, drove both with Playwright. Submitted a `generate_script` job: timeline showed only "Job created" while queued, then correctly added "Job started" and "Job done" with sensible absolute/relative timestamps once it finished. Submitted a `storyboard` job with ComfyUI intentionally not running: timeline showed "Job created → Job started → Job failed", the real "ComfyUI is not reachable..." error surfaced on the row, and the Retry button was present and correctly enabled. Zero console errors in both runs (screenshots in the session scratchpad). Per-shot submitted/finished interleaving with a *real* ComfyUI run wasn't exercised live, since ComfyUI wasn't running this session — that path is covered instead by the backend round-trip test and `JobTimeline.test.ts`'s interleaving case (explicitly noted as a scope boundary, not silently skipped).
+**Live validation:** started a real backend + real Vite dev server, drove both with Playwright. Submitted a `generate_script` job: timeline showed only "Job created" while queued, then correctly added "Job started" and "Job done" with sensible absolute/relative timestamps once it finished. Submitted a `storyboard` job with ComfyUI intentionally not running: timeline showed "Job created → Job started → Job failed", the real "ComfyUI is not reachable..." error surfaced on the row, and the Retry button was present and correctly enabled. Zero console errors in both runs (screenshots in the session scratchpad). Per-shot submitted/finished interleaving with a _real_ ComfyUI run wasn't exercised live, since ComfyUI wasn't running this session — that path is covered instead by the backend round-trip test and `JobTimeline.test.ts`'s interleaving case (explicitly noted as a scope boundary, not silently skipped).
 
 **Files changed:** `backend/models/schemas.py`, `backend/api/routes/storyboard.py`, `tests/test_job_routes.py`, `frontend/src/types.ts`, `frontend/src/formatTime.ts` (new), `frontend/src/formatTime.test.ts` (new), `frontend/src/components/JobTimeline.tsx` (new), `frontend/src/components/JobTimeline.test.ts` (new), `frontend/src/pages/JobDetailPage.tsx`, `frontend/src/App.css`, `frontend/src/api.test.ts`, `frontend/src/useJob.test.tsx`, `frontend/src/useJobList.test.tsx`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - CI still never observed running on a real GitHub Actions job — this repo still has no git remote. The only remaining backlog item with any real weight.
 - Retry/cancel attempt history isn't shown anywhere (new, named explicitly as a Job Timeline scope limit, tracked in `TODO.md`'s "Missing features").
 - `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
@@ -194,6 +245,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Files changed:** `frontend/package.json`/`package-lock.json` (new `react-router-dom` dependency), `frontend/src/main.tsx`, `frontend/src/App.tsx`, `frontend/src/pages/DashboardPage.tsx` (new), `frontend/src/pages/JobDetailPage.tsx` (new), `frontend/src/useJob.ts` (new), `frontend/src/useJob.test.tsx` (new), `frontend/src/api.ts`, `frontend/src/api.test.ts`, `frontend/src/components/JobRow.tsx`, `frontend/src/App.css`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - CI still never observed running on a real GitHub Actions job — this repo still has no git remote. The only remaining backlog item with any real weight.
 - Job timestamps deferred (new, small backend+frontend item, tracked in `TODO.md`).
 - `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
@@ -220,6 +272,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Files changed:** `frontend/src/useJobList.ts`, `frontend/src/components/StatusFilter.tsx` (new), `frontend/src/App.tsx`, `frontend/src/components/JobList.tsx`, `frontend/src/App.css`, `frontend/src/useJobList.test.tsx`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - CI still never observed running on a real GitHub Actions job — this repo still has no git remote. Now the only remaining backlog item with any real weight.
 - `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` still have no dedicated direct tests (low priority).
 - BUG-5 (cosmetic) and a dependency lockfile still open (low priority).
@@ -240,15 +293,16 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 - **`frontend/src/App.tsx`**, **`ScriptForm.tsx`**, **`StoryboardForm.tsx`**: `onSubmitted` prop simplified from `(jobId: string) => void` to `() => void` — the id is no longer needed by the caller now that there's no client-side tracking to add it to.
 - No backend changes at all — `GET /api/jobs` already returned exactly the shape needed.
 
-**First automated frontend tests** (none existed before this — the initial frontend milestone was verified via TypeScript compilation + one live Playwright session only): added `vitest` + `@testing-library/react` + `jsdom` as devDependencies, config folded into the existing `vite.config.ts` (`test: { environment: 'jsdom', globals: true }`, no second config file), new `"test": "vitest run"` script. `frontend/src/api.test.ts` (3 cases — unfiltered call, `?status=` query building, error-detail propagation) and `frontend/src/useJobList.test.tsx` (4 cases — initial-mount fetch, interval re-fetch, in-place `updateJob`, resilience to a failed poll). One real debugging note worth keeping: mixing `@testing-library/react`'s `waitFor` (which polls via *real* timers internally) with `vi.useFakeTimers()` hangs every assertion until vitest's own 5s test timeout — fixed by either not using fake timers at all (most tests) or engaging fake timers *before* the hook mounts and flushing the initial effect with `vi.advanceTimersByTimeAsync(0)` instead of `waitFor` (the interval test). `npm run test` → 7 passed. `npm run build` still compiles clean.
+**First automated frontend tests** (none existed before this — the initial frontend milestone was verified via TypeScript compilation + one live Playwright session only): added `vitest` + `@testing-library/react` + `jsdom` as devDependencies, config folded into the existing `vite.config.ts` (`test: { environment: 'jsdom', globals: true }`, no second config file), new `"test": "vitest run"` script. `frontend/src/api.test.ts` (3 cases — unfiltered call, `?status=` query building, error-detail propagation) and `frontend/src/useJobList.test.tsx` (4 cases — initial-mount fetch, interval re-fetch, in-place `updateJob`, resilience to a failed poll). One real debugging note worth keeping: mixing `@testing-library/react`'s `waitFor` (which polls via _real_ timers internally) with `vi.useFakeTimers()` hangs every assertion until vitest's own 5s test timeout — fixed by either not using fake timers at all (most tests) or engaging fake timers _before_ the hook mounts and flushing the initial effect with `vi.advanceTimersByTimeAsync(0)` instead of `waitFor` (the interval test). `npm run test` → 7 passed. `npm run build` still compiles clean.
 
-**Live validation, the real point of this session:** started a real backend + real Vite dev server, then used the same throwaway Playwright setup from an earlier session (still cached in the scratchpad) to drive **two independent browser contexts** (separate `localStorage`, standing in for two different browsers/machines) against the live dashboard. Browser A submitted a new job; polled browser A specifically for the top row's id to *change* from what it was before submitting (closes a real timing race an earlier, cruder version of this check had — comparing raw job-row counts between the two browsers is inherently racy right now anyway, since this backend still has genuinely queued/running jobs left over from earlier sessions' live tests, so total counts can legitimately drift between two measurements taken seconds apart regardless of anything this feature does). Once browser A's new job id was confirmed, polled browser B — which never submitted anything itself, in a fully separate context — and confirmed it showed that exact same job id within one poll interval, purely from `GET /api/jobs` server-side history. Zero console errors on a plain page load.
+**Live validation, the real point of this session:** started a real backend + real Vite dev server, then used the same throwaway Playwright setup from an earlier session (still cached in the scratchpad) to drive **two independent browser contexts** (separate `localStorage`, standing in for two different browsers/machines) against the live dashboard. Browser A submitted a new job; polled browser A specifically for the top row's id to _change_ from what it was before submitting (closes a real timing race an earlier, cruder version of this check had — comparing raw job-row counts between the two browsers is inherently racy right now anyway, since this backend still has genuinely queued/running jobs left over from earlier sessions' live tests, so total counts can legitimately drift between two measurements taken seconds apart regardless of anything this feature does). Once browser A's new job id was confirmed, polled browser B — which never submitted anything itself, in a fully separate context — and confirmed it showed that exact same job id within one poll interval, purely from `GET /api/jobs` server-side history. Zero console errors on a plain page load.
 
 **Commits from the prior two sessions** (requested at the start of this session, before starting this new feature): `f8cc8e1` (frontend addition) and `b7e6a05` (CORS/CI/retry-cancel/BUG-6/list-jobs backend work) — see the git log for detail; not re-described here since they predate this session's actual work.
 
 **Files changed this session:** `frontend/src/api.ts`, `frontend/src/useJobList.ts` (new), `frontend/src/useTrackedJobs.ts` (deleted), `frontend/src/App.tsx`, `frontend/src/components/ScriptForm.tsx`, `frontend/src/components/StoryboardForm.tsx`, `frontend/src/api.test.ts` (new), `frontend/src/useJobList.test.tsx` (new), `frontend/vite.config.ts`, `frontend/package.json`, `frontend/package-lock.json`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - CI still never observed running on a real GitHub Actions job — this repo still has no git remote. Now the single top open item.
 - No status-filter UI in the dashboard (backend supports `?status=`, not exposed yet) — small, optional, low priority.
 - `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` still have no dedicated direct tests.
@@ -273,6 +327,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Files changed:** `backend/core/job_store.py`, `backend/api/routes/storyboard.py`, `tests/test_job_store.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - The frontend still doesn't use this new endpoint — it still client-tracks submitted job ids via `localStorage` (from the prior session, before this endpoint existed). Updating it to show real server-side history is the natural next step and now the top open item.
 - CI still never observed running on a real GitHub Actions job (no git remote configured).
 - BUG-5 (cosmetic), `_naive_shot_split`/`_apply_shot_to_workflow` direct tests, and a dependency lockfile are all still open, all low priority.
@@ -287,6 +342,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **What was completed:** User asked for three things bundled together: retry a `FAILED` job, job cancellation, and starting a frontend. Scope disambiguation took several rounds (the user's "stage 3/4/7" references turned out to map to `TODO.md`'s "Missing features" list, not the "Recommended next steps" roadmap I'd used earlier) — worth remembering that "stage N" isn't inherently anchored to one list in this repo. Given the size (three features, one of them open-ended), used Plan mode: three parallel `Explore` agents read `worker.py`/`job_store.py`, `storyboard.py`/`schemas.py`/`recovery.py`/`app.py`, and confirmed no frontend/Node tooling existed anywhere in the repo; `AskUserQuestion` settled frontend stack (React+Vite+TS), scope (minimal job dashboard), and the job-list-source gap (client-tracked via `localStorage`, no new list-jobs endpoint — deliberately not what "frontend" scope meant this time). A dedicated Plan agent then stress-tested the retry/cancel state-machine design and found two real gaps before any code was written (both incorporated into the plan, see `TODO.md`'s milestone entry for detail): a dequeue-time check that needed to treat `CANCELLING` the same as `CANCELLED` (else silently clobbered back to `RUNNING`), and retry needing to reject a job cancelled while still `QUEUED` (`started_at IS NULL`) to avoid a duplicate queue entry. Full plan: `C:\Users\hokph\.claude\plans\logical-mapping-biscuit.md`.
 
 **Backend implementation:**
+
 - `backend/core/worker.py`: new `JobStatus.CANCELLING`/`CANCELLED`, new `JobCancelled` exception. `_run()` now checks the persisted row before marking `RUNNING` (skips/finalizes an already-cancelled-or-cancelling job without invoking its handler) and catches `JobCancelled` ahead of the generic `except Exception` to finalize as `CANCELLED` rather than `FAILED`.
 - `backend/core/job_store.py`: new `reset_job_for_retry`/`reset_shots_by_status` methods (explicit blanking of stale `error`/`result`, since `update_job_status`'s COALESCE semantics can't do this). Also gained a `threading.Lock` around `_run()`'s dispatch — see BUG-6 below.
 - `backend/core/recovery.py`: fixed the Plan-agent-caught race in `_resume_comfyui_jobs` (re-fetches each row fresh instead of trusting a snapshot captured before a possibly-indefinite ComfyUI-health wait); `resume_incomplete_jobs`'s startup query now includes `CANCELLING`, finalized to `CANCELLED` rather than resubmitted.
@@ -296,14 +352,16 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Frontend (`frontend/`):** React + Vite + TypeScript, scaffolded via `npm create vite@latest`. Node.js LTS wasn't installed anywhere on this machine — installed via `winget install OpenJS.NodeJS.LTS` with the user's explicit approval first (confirmed `winget` was available before asking, rather than asking blind). Minimal job dashboard: `ScriptForm`/`StoryboardForm` submit jobs, `useTrackedJobs` hook polls each tracked job id (persisted to `localStorage`) every 3s via the existing `GET /api/jobs/{id}`, `JobRow` shows status/shots/error and conditionally renders Retry/Cancel buttons and download links. TypeScript compiles clean, `npm run build` succeeds. `.env`/`.env.example` (both root and `frontend/`) updated so `CORS_ALLOWED_ORIGINS` includes the Vite dev server's origin.
 
 **Live validation, not just tests — and this is what actually mattered this session:**
+
 - Direct `curl` against a real running backend confirmed: cancelling a `QUEUED` generate_script job (real log line: `"was cancelled before it started running; skipping"`), a storyboard job failing for a real reason (ComfyUI down) then being retried and genuinely re-running (same real failure recurred, proving state was actually reset and re-executed, not faked), cancel-on-terminal-job → 409, download-missing-file → 404, and a real CORS preflight from the frontend's actual origin succeeding.
 - `chromium-cli` (the `run` skill's preferred driver) wasn't available in this environment, so set up a throwaway Playwright install in the scratchpad instead and drove a real headless Chromium against the real dev server + real backend: submitted both job kinds through the actual UI, confirmed the job list live-polls to terminal states, confirmed the Retry button appears on a real `failed` job and clicking it genuinely re-queues it (status flips to `queued` in the UI), confirmed Cancel works on a real queued job, screenshotted throughout (`06-retry-button-visible.png` etc., in the session scratchpad).
-- **This live pass caught a real bug the 71 mocked tests had not** (BUG-6, now in `TODO.md`): the first run showed browser console errors that looked like a CORS misconfiguration (`No 'Access-Control-Allow-Origin' header`). Chased it down via the actual backend log rather than trusting the browser's framing of the error, and found the real cause: `sqlite3.InterfaceError: bad parameter or other API misuse` — `JobStore`'s single `sqlite3.Connection`, used via `asyncio.to_thread` from multiple concurrent requests (exactly what the frontend's polling does, and nothing before this session ever did), was never actually thread-safe despite `check_same_thread=False` (that flag only disables Python's *check*, not real concurrency safety). Fixed with a `threading.Lock` in `JobStore._run()`. Confirmed the fix's regression test reliably reproduces the exact real error 3/3 times when the lock is removed, and passes clean with it restored. Re-ran the full Playwright session against the restarted, fixed backend: zero console errors.
+- **This live pass caught a real bug the 71 mocked tests had not** (BUG-6, now in `TODO.md`): the first run showed browser console errors that looked like a CORS misconfiguration (`No 'Access-Control-Allow-Origin' header`). Chased it down via the actual backend log rather than trusting the browser's framing of the error, and found the real cause: `sqlite3.InterfaceError: bad parameter or other API misuse` — `JobStore`'s single `sqlite3.Connection`, used via `asyncio.to_thread` from multiple concurrent requests (exactly what the frontend's polling does, and nothing before this session ever did), was never actually thread-safe despite `check_same_thread=False` (that flag only disables Python's _check_, not real concurrency safety). Fixed with a `threading.Lock` in `JobStore._run()`. Confirmed the fix's regression test reliably reproduces the exact real error 3/3 times when the lock is removed, and passes clean with it restored. Re-ran the full Playwright session against the restarted, fixed backend: zero console errors.
 - One process-management lesson from this session: a "restart the backend" attempt silently failed to take effect once (`pkill` didn't actually kill the old process; the new `uvicorn` hit `Errno 10048` port-in-use and never started, so curl kept hitting the stale process) — caught by checking `Get-NetTCPConnection`/`Get-Process` directly rather than assuming a background command's own "completed" notification meant the new process was live.
 
 **Files changed:** `backend/core/worker.py`, `backend/core/job_store.py`, `backend/core/recovery.py`, `backend/api/routes/storyboard.py`, `tests/test_worker.py` (new), `tests/test_job_routes.py` (new), `tests/test_job_store.py`, `tests/test_recovery.py`, `tests/test_config.py` (one test fixed to use `_env_file=None`, since the real `.env` now legitimately sets `CORS_ALLOWED_ORIGINS` for frontend dev use), `frontend/` (new directory, full Vite+React+TS app), `.env` (local, added `CORS_ALLOWED_ORIGINS`), `.env.example`, `README.md` (new "Frontend" section, updated Endpoints table and "Known gaps" pointer), `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking.
+
 - No list-jobs endpoint — now the single top-priority open item (`JobStore.list_jobs` already implemented internally). The frontend's job list is client-tracked via `localStorage` specifically because this doesn't exist yet.
 - CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — this repo still has no git remote.
 - `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` pure functions still have no dedicated direct tests (low priority — already exercised indirectly).
@@ -326,11 +384,12 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 - **`README.md`**: Setup step 1 gained a short note on the split and when `requirements-gpu.txt` is actually needed.
 - **`.github/workflows/ci.yml`** (new): triggers on `push`/`pull_request` to `master` (this repo's actual current branch — there's no `main`), `ubuntu-latest`, Python 3.12 with pip caching, `pip install -r requirements.txt`, `pytest tests/ -v`. Kept deliberately minimal — no coverage/lint/badges — matching what `TODO.md` asked for.
 
-**Live validation (of what could be validated without a remote):** built a completely fresh, throwaway venv (outside the repo, in the session scratchpad) and ran the exact install+test sequence CI will run: `pip install -r requirements.txt` (confirmed no `torch` in the resolved set, ~1m49s, all from PyPI) then `pytest tests/ -v` → **35 passed in 12.5s**, torch entirely absent from that venv. This proves the workflow's steps are correct and self-sufficient. **What this does *not* prove:** that GitHub Actions itself will actually run the workflow — this repo still has no git remote, so the YAML has never executed on a real GitHub-hosted runner. That's an explicit, named gap, not an oversight.
+**Live validation (of what could be validated without a remote):** built a completely fresh, throwaway venv (outside the repo, in the session scratchpad) and ran the exact install+test sequence CI will run: `pip install -r requirements.txt` (confirmed no `torch` in the resolved set, ~1m49s, all from PyPI) then `pytest tests/ -v` → **35 passed in 12.5s**, torch entirely absent from that venv. This proves the workflow's steps are correct and self-sufficient. **What this does _not_ prove:** that GitHub Actions itself will actually run the workflow — this repo still has no git remote, so the YAML has never executed on a real GitHub-hosted runner. That's an explicit, named gap, not an oversight.
 
 **Files changed:** `.github/workflows/ci.yml` (new), `requirements-gpu.txt` (new), `requirements.txt`, `README.md`, `TODO.md`, `SESSION_STATE.md`. No live services (ComfyUI/backend/Ollama) needed or started.
 
 **Remaining problems / blockers:**
+
 - **CI has never run for real** — push this repo to a GitHub remote and confirm the workflow actually fires before fully trusting it. This is the most important loose end from this session.
 - BUG-5 (P3) — two redundant `ComfyUIClient` instances (cosmetic). Still open.
 - No list-jobs endpoint — now the top-priority open item once CI is confirmed live (`JobStore.list_jobs` already supports the query internally).
@@ -359,6 +418,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Files changed:** `backend/core/config.py`, `backend/app.py`, `.env.example`, `README.md`, `tests/test_config.py` (new), `TODO.md`, `SESSION_STATE.md`. No live services (ComfyUI/backend/Ollama) were needed or started this session — config + route-level work only, as anticipated.
 
 **Remaining problems / blockers:** None. Open items, unchanged in kind from before this session except where noted:
+
 - BUG-5 (P3) — two redundant `ComfyUIClient` instances (cosmetic). Still open.
 - No CI yet — now the top-priority open item (see `TODO.md` "Recommended next steps" step 6).
 - No list-jobs endpoint (though `JobStore.list_jobs` already supports the query internally).
@@ -383,6 +443,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Tests:** `tests/test_job_store.py` (7 cases) and `tests/test_recovery.py` (10 cases, covering all three shot-reconciliation branches plus recovery's job-level routing) — both new, both passing. Full suite: `python -m pytest tests/ -v` → **32 passed**.
 
 **Live validation (not just mocks) — three real runs against the actual ComfyUI/Arc A750 stack:**
+
 1. Baseline 3-shot job, no interruption → completed cleanly (no regression).
 2. Restarted the backend against an already-`DONE` job → correctly ignored by recovery (only `QUEUED`/`RUNNING` are picked up), still fully queryable via the API after restart with `project_id`/`workflow_name`/`shots` all intact.
 3. **The real test:** submitted a job, let shot 0 finish and shot 1 reach `SUBMITTED` (a real ComfyUI `prompt_id` in flight), then killed the **backend process only** (`Stop-Process -Force`, ComfyUI untouched) and restarted it ~40s later. Backend log on restart:
@@ -403,6 +464,7 @@ Second, the actual feature: **Job Execution Logs**, requested via a staged plann
 **Files changed:** `backend/core/job_store.py` (new), `backend/core/recovery.py` (new), `backend/core/worker.py`, `backend/core/config.py`, `backend/api/routes/storyboard.py`, `backend/api/routes/generate_script.py`, `backend/app.py`, `backend/models/schemas.py`, `.env.example`, `.gitignore` (added `.claude/settings.local.json` — a harness-local permissions file, not project source, that appeared as untracked during this session), `tests/test_job_store.py` (new), `tests/test_recovery.py` (new), `TODO.md`, `SESSION_STATE.md`.
 
 **Remaining problems / blockers:** None blocking — no known bugs introduced. Open items, unchanged in kind from before this session except where noted:
+
 - BUG-3 (P1) — wildcard CORS + zero authentication on every endpoint. Still open, now the top-priority open item (see TODO.md "Recommended next steps").
 - BUG-5 (P3) — two redundant `ComfyUIClient` instances (cosmetic). Still open.
 - No CI. No list-jobs endpoint (though `JobStore.list_jobs` already supports the query internally). Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) still untested directly. No frontend yet.
@@ -427,7 +489,8 @@ All four documented failure conditions were checked explicitly and none occurred
 **Files changed:** none in the application/test source — this was a pure validation session. `TODO.md` and `SESSION_STATE.md` updated with the live evidence. `.env` was temporarily pointed at the test proxy's port and fully reverted to `COMFYUI_PORT=8188` afterward (`.env` is gitignored regardless, so this never touched git). No firewall rules were left behind (added and removed one test rule, confirmed cleanup). All background processes (ComfyUI, backend, proxy) were stopped at the end; verified only unrelated pre-existing processes (a different project, `chinesekhmerdubber_v1`) remained running, untouched.
 
 **Remaining problems** (see `TODO.md` for full detail):
-- BUG-3 (P1) — Wildcard CORS + zero authentication on every endpoint. Still open. (Incidentally, this session's Windows loopback-exemption finding is a mild point *in favor* of the current localhost-only deployment being less exposed than a naive read of BUG-3 might suggest for same-machine threats specifically — though it does nothing to mitigate the actual documented risk, which is any browser tab on this machine making a same-origin-exempt request to the API.)
+
+- BUG-3 (P1) — Wildcard CORS + zero authentication on every endpoint. Still open. (Incidentally, this session's Windows loopback-exemption finding is a mild point _in favor_ of the current localhost-only deployment being less exposed than a naive read of BUG-3 might suggest for same-machine threats specifically — though it does nothing to mitigate the actual documented risk, which is any browser tab on this machine making a same-origin-exempt request to the API.)
 - BUG-4 (P2) — Partial storyboard failure silently discards already-succeeded shots' results. Still open, and now the top priority.
 - BUG-5 (P3) — Two redundant `ComfyUIClient` instances (cosmetic). Still open.
 - Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) are still untested.
@@ -443,12 +506,14 @@ No live services needed for the next step. Pick up BUG-4 (`backend/api/routes/st
 **What changed today:** Checked whether BUG-1 could be reproduced live first, per the previous session's "exact next command." It couldn't: neither ComfyUI (`127.0.0.1:8188`) nor the ManyTV backend was running (both `curl` checks returned no connection; only Ollama at `11434` was up). Starting ComfyUI to force a real multi-minute GPU generation wasn't something to do unprompted, so instead of blocking on that, implemented the fix the diagnosis already pointed to: `ComfyUIClient.wait_for_completion` (`backend/core/comfyui_client.py`) now catches a dropped WebSocket and falls back to a new `_poll_history_until_done` method, which polls `/history/{prompt_id}` every 3s until ComfyUI records a finished entry, instead of failing the job outright. Rationale: ComfyUI keeps executing a queued prompt regardless of whether the monitoring socket stays connected, so a dropped socket was never actually proof the job failed. A real `execution_error` from ComfyUI (an actual generation failure) still raises immediately and is untouched by this change; a genuinely dead ComfyUI (not just a dropped socket) still fails fast because `get_history` then raises an `httpx` error, not a `ComfyUIError`, which isn't caught by the polling loop's retry. Verified with 4 new mocked unit tests — real behavior against a live ComfyUI instance has **not** been observed yet, since none was running this session.
 
 **Files modified:**
+
 - `backend/core/comfyui_client.py` — added `import asyncio`; `wait_for_completion`'s except-block now falls back to the new `_poll_history_until_done` instead of raising `ComfyUIError` directly; added `_poll_history_until_done`
 - `tests/test_comfyui_client.py` (new) — 4 cases: polling retries until history appears, non-`ComfyUIError` propagates immediately, a dropped socket triggers the fallback, a real `execution_error` still raises immediately
 - `TODO.md` — BUG-1 marked mitigated (not closed) with full detail; Completed/Current-tasks/Missing-features/Recommended-next-steps sections updated to match
 - `SESSION_STATE.md` — this entry
 
 **Remaining problems** (see `TODO.md` for full detail):
+
 - **BUG-1 is mitigated but not closed** — the fix is implemented and unit-tested against mocks, but the actual failure was only ever observed against a real running ComfyUI, and the fix hasn't been run against one yet. This is the single most important thing to do next.
 - BUG-3 (P1) — Wildcard CORS + zero authentication on every endpoint. Still open.
 - BUG-4 (P2) — Partial storyboard failure silently discards already-succeeded shots' results. Still open, and now the most impactful remaining gap — pairs with BUG-1 validation since a mid-job failure after some shots succeed is exactly the scenario BUG-4 is about.
@@ -456,6 +521,7 @@ No live services needed for the next step. Pick up BUG-4 (`backend/api/routes/st
 - Worker queue/failure semantics and `storyboard.py`'s pure functions (`_naive_shot_split`, `_apply_shot_to_workflow`) are still untested.
 
 **Exact next command/task:**
+
 ```powershell
 # Terminal 1
 D:\NewProjects\ComfyUI\.venv\Scripts\Activate.ps1
@@ -466,6 +532,7 @@ D:\NewProjects\ManyTV\.venv\Scripts\Activate.ps1
 copy .env.example .env   # if not already present
 uvicorn backend.app:app --reload --port 8000
 ```
+
 Then submit a real multi-shot `/api/storyboard` job (2-3 shots is enough) and watch the backend log for either a clean run or, if a WebSocket drop recurs, the new `"WebSocket to ComfyUI dropped ... falling back to polling"` line followed by the job still completing. Once that's observed, flip BUG-1 from "mitigated" to "closed" in `TODO.md`. Only after that (or if the user prefers to skip straight ahead): pick up BUG-4.
 
 ---
@@ -475,6 +542,7 @@ Then submit a real multi-shot `/api/storyboard` job (2-3 shots is enough) and wa
 **What changed today:** `git init` + baseline commit landed first (see prior log entry's "exact next command" — done as the first commit of this session, capturing the repo exactly as the audit left it, docs included). Then BUG-2 was fixed: `StoryboardRequest.workflow_name` (`backend/models/schemas.py`) now requires `^[A-Za-z0-9_-]+$`, rejecting `/`, `\`, `.`, spaces, and empty string at the Pydantic validation boundary before the value can reach `_load_workflow`'s filesystem path construction. Test tooling was bootstrapped from nothing: `pytest` added to `requirements.txt` and installed into `.venv`, first test module `tests/test_schemas.py` written (11 cases: default value, 8 rejected traversal/invalid inputs, 3 accepted valid names) and run — all passing. `.pytest_cache/` added to `.gitignore`.
 
 **Files modified:**
+
 - `backend/models/schemas.py` — added `pattern=r"^[A-Za-z0-9_-]+$"` to `StoryboardRequest.workflow_name`'s `Field(...)`
 - `requirements.txt` — added `pytest>=8.0` under a new "Dev / test" section
 - `tests/test_schemas.py` (new) — regression coverage for the fix
@@ -483,6 +551,7 @@ Then submit a real multi-shot `/api/storyboard` job (2-3 shots is enough) and wa
 - `SESSION_STATE.md` — this entry
 
 **Remaining problems** (unchanged in substance, see `TODO.md` for full detail):
+
 - BUG-1 (P0) — ComfyUI WebSocket connection dies mid-job with "keepalive ping timeout", losing all remaining shots. Still open — this session did not touch it.
 - BUG-3 (P1) — Wildcard CORS + zero authentication on every endpoint. Still open. Note: this is what made BUG-2 exploitable from a browser in the first place; fixing BUG-2 closed that specific input, not the exposure model.
 - BUG-4 (P2) — Partial storyboard failure silently discards already-succeeded shots' results. Still open.
@@ -499,12 +568,14 @@ No command needed yet — next is investigative, not a fixed command. Reproduce 
 **What changed today:** Nothing in the source tree. This was a read-only audit — every `.py` file, both markdown docs, the workflow JSON, the PowerShell launch script, `requirements.txt`/`.env.example`, and the runtime artifacts (`server.log`, `output/`, `.e2e_job_id`) were read and cross-referenced, including checking one crash in `server.log` against the actually-installed `websockets==16.1` source in `.venv` to confirm a real root-cause hypothesis rather than guessing. Verified via mtime check that no `backend/`, `scripts/`, or `workflows/` file was touched during or after the audit — all predate this session (05:30–06:59) except the three docs below. The user opened `scripts/run_comfyui.ps1` in the IDE during this session; that was a view, not an edit — file content and mtime are unchanged from before the audit.
 
 **Files modified:**
+
 - Created `PROJECT_ANALYSIS.md` — architecture, design rationale, dependency review, confirmed-working-behavior evidence, code quality assessment
 - Created `TODO.md` — completed work, bugs (prioritized), missing features, recommended next steps in order
 - Created `SESSION_STATE.md` — this file
 - No files under `backend/`, `scripts/`, `output/`, or any config file were modified.
 
 **Remaining problems** (see `TODO.md` for full detail — unchanged by this session, since it made no fixes):
+
 - BUG-1 (P0) — ComfyUI WebSocket connection dies mid-job with "keepalive ping timeout", losing all remaining shots. Confirmed in `server.log`; root cause not yet fixed, only diagnosed.
 - BUG-2 (P1) — `workflow_name` request field not sanitized before filesystem path construction (path traversal).
 - BUG-3 (P1) — Wildcard CORS (`allow_origins=["*"]`) + zero authentication on every endpoint.
@@ -513,12 +584,14 @@ No command needed yet — next is investigative, not a fixed command. Reproduce 
 - **Project is still not a git repository** — no `.git/` exists. Nothing done in this session is under version control yet.
 
 **Exact next command/task:**
+
 ```powershell
 cd D:\NewProjects\ManyTV
 git init
 git add -A
 git commit -m "Initial commit: working ManyTV backend (script gen + storyboard pipeline)"
 ```
+
 Then proceed to `TODO.md` step 2: fix BUG-2 (sanitize `workflow_name` in `backend/api/routes/storyboard.py`).
 
 ---
@@ -552,6 +625,7 @@ These weren't answerable from the repository alone:
 ## Recommended entry point for next session
 
 BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, Job Execution Logs, Job Output Artifacts, a full migration from frontend polling to Server-Sent Events, and (as of this session) direct test coverage for `storyboard.py`'s pure helper functions are all done (see the `2026-07-18 (yet later)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+
 - **This repo has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`. The SSE migration commit (`cb090d7`) still hasn't been pushed there. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
 - See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's one new test file was not yet committed** as of this entry, deliberately waiting for explicit approval per the user's instruction.
 - `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests, including two real jobs with genuine ComfyUI-produced `.mp4` files (`7ec76e91...`, `bc89fff6...`) useful for future live checks of anything artifact-related.
@@ -561,6 +635,7 @@ BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardenin
 **Exact next task:** Get approval, then commit this session's `tests/test_storyboard_helpers.py` addition. Independently: push `cb090d7` to `origin`, and confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
 
 **Commands to resume:**
+
 ```powershell
 cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed

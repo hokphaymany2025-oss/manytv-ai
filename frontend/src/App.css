@@ -119,6 +119,14 @@
   text-decoration: underline;
 }
 
+.job-row__project {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  background: var(--code-bg);
+  color: var(--text);
+}
+
 .job-row__status {
   padding: 2px 8px;
   border-radius: 999px;

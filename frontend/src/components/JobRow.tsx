@@ -53,6 +53,7 @@ export function JobRow({ job, onChanged, showFiles = true }: Props) {
         <Link to={`/jobs/${job.id}`} className="job-row__id">
           <code>{job.id}</code>
         </Link>
+        {job.project_id && <span className="job-row__project">{job.project_id}</span>}
         <span className={`job-row__status job-row__status--${job.status}`}>{job.status}</span>
         <div className="job-row__actions">
           {CANCELLABLE_STATUSES.has(job.status) && (
