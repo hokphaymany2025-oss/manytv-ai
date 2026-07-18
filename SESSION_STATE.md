@@ -1,10 +1,36 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (Phase 2 — retry/cancel attempt history, backend only). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (Phase 3 — backend test coverage measurement added via `pytest-cov`, 85% overall). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (Phase 3) — Backend test coverage measurement added
+
+**What was completed:** First Phase 3 item picked up after the `storyboard.py` refactor: "add backend test coverage measurement," explicitly scoped to analysis + tooling only, no application code changes. Checked the current setup first — `pytest.ini` only sets `pythonpath = .`; `requirements.txt` had `pytest>=8.0` and nothing else in its Dev/test section; no `.coveragerc`/`pyproject.toml` existed. `pytest-cov` wasn't installed.
+
+- Installed `pytest-cov` (pulled in `coverage==7.15.2`); added `pytest-cov>=5.0` to `requirements.txt`'s Dev/test section with an inline comment naming the exact command to run it.
+- New `.coveragerc` — `source = backend` (tests aren't measured, matching the intent of "how much of the application is exercised," not the test suite itself), `show_missing = True`.
+- `.gitignore` gained `.coverage`/`htmlcov/` — generated, ephemeral artifacts, same treatment as `.pytest_cache/`.
+- **Deliberately did not add `--cov` to `pytest.ini`'s `addopts`** — a plain `pytest`/CI run (`.github/workflows/ci.yml` still just runs `pytest tests/ -v`) stays exactly as fast and quiet as before; coverage is opt-in via `pytest --cov=backend --cov-report=term-missing tests/`, chosen over silently changing every future test run's default output when the task's scope was "generate a coverage report," not "wire coverage into CI" (that's named as a separate, still-open step).
+- Regenerated `requirements.lock.txt` (`pip freeze` via bash, not PowerShell) to include the new dependency. Side effect, not the point of this session: this fixed a real, previously-unnoticed problem — the lockfile from Phase 1 was UTF-16-encoded (confirmed via `file requirements.lock.txt` and a raw byte read showing a `\xff\xfe` BOM), almost certainly from being generated via PowerShell's `>` redirection rather than `Out-File -Encoding utf8`. Verified this was harmless in practice (`pip install --dry-run -r requirements.lock.txt` parsed it correctly regardless), but UTF-8 is the conventional encoding for this kind of file and it was a one-line fix while already touching it — not chased down further or treated as a bug needing separate investigation.
+
+**Result:** `python -m pytest --cov=backend --cov-report=term-missing tests/ -v` → **136 passed**, **85% overall coverage** (893 statements, 130 missed). Full breakdown in `TODO.md`'s new Completed entry. Highest: `job_store.py`/`schemas.py`/`artifacts.py` all 100%. Lowest: `llm_client.py` 52%, `comfyui_client.py` 53%, `gpu_memory.py` 56%, `app.py` 67%, `generate_script.py` 68% — every one of these needs a live Ollama/ComfyUI instance or real process lifecycle to exercise their uncovered branches, consistent with this project's long-standing pattern of live-validating exactly these paths rather than mocking them further (see nearly every prior Session Log entry's "Live validation" section). Not a new discovery — the first time it's been quantified rather than just generally known. Also generated an HTML report (`htmlcov/`, gitignored) via `--cov-report=html` as a browsable artifact, not committed.
+
+**Files changed:** `requirements.txt`, `requirements.lock.txt` (regenerated), `.coveragerc` (new), `.gitignore`, `TODO.md`, `SESSION_STATE.md`. No `backend/` source files touched — confirmed by `git status` before finishing.
+
+**Also caught up `TODO.md`'s bookkeeping**, which had fallen behind: the retry/cancel attempt history frontend work (`JobAttemptHistory.tsx` + its diff review) from the two preceding turns had never been logged, since those turns' explicit instructions were scoped to implementation/review only, not doc updates. Added a Completed entry for it now, alongside this session's coverage work, so both `TODO.md` and this file are accurate as of right now rather than one release behind.
+
+**Remaining problems / blockers:** None blocking.
+- Frontend coverage measurement (`vitest --coverage`) not started — the natural next small item, pairing with this session's backend work.
+- Neither coverage report is wired into CI yet — named as a separate, deliberately-deferred step, not forgotten.
+- Phase 4 not started, gated on revisiting BUG-3's localhost-only scope decision.
+- **This session's coverage-tooling changes are not yet committed** — waiting for approval. (The retry/cancel attempt history frontend work from the two preceding turns is already committed — `b45324c`/`52ccbab` on `feature/v1.2-development`, landed out-of-band between turns, confirmed via `git log` rather than assumed.)
+
+**Exact next task:** Get approval to commit this session's coverage-tooling changes (`requirements.txt`, `requirements.lock.txt`, `.coveragerc`, `.gitignore`, `TODO.md`, `SESSION_STATE.md`) on `feature/v1.2-development`. Once approved and ready to continue: frontend coverage measurement (`vitest --coverage`) is the smallest next item.
+
+---
 
 ### 2026-07-19 (Phase 2) — Retry/cancel attempt history added, backend only
 

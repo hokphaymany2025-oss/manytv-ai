@@ -12,6 +12,7 @@ openai>=1.50   # OpenAI-compatible client; talks to local Ollama by default
 
 # ---- Dev / test ----
 pytest>=8.0
+pytest-cov>=5.0   # coverage measurement -- `pytest --cov=backend --cov-report=term-missing tests/`
 
 # ---- Intel Arc (XPU) torch stack ----
 # Optional -- moved to requirements-gpu.txt. Not needed to run this
