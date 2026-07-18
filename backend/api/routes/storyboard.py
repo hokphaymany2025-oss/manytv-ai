@@ -32,6 +32,7 @@ from backend.core.job_store import get_job_store
 from backend.core.storyboard_engine import _naive_shot_split
 from backend.core.worker import Job, JobStatus, LogLevel, LogStage, ShotStatus, worker
 from backend.models.schemas import (
+    JobAttemptEntry,
     JobLogEntry,
     JobStatusResponse,
     StoryboardRequest,
@@ -104,6 +105,25 @@ async def get_job_logs(job_id: str) -> list[JobLogEntry]:
         JobLogEntry(
             timestamp=r["timestamp"], level=r["level"], stage=r["stage"],
             message=r["message"], shot_index=r["shot_index"],
+        )
+        for r in rows
+    ]
+
+
+@router.get("/jobs/{job_id}/attempts", response_model=list[JobAttemptEntry])
+async def get_job_attempts(job_id: str) -> list[JobAttemptEntry]:
+    """Past attempts a /retry overwrote (see reset_job_for_retry) -- empty
+    for a job that's never been retried. Oldest first, same convention as
+    get_job_logs.
+    """
+    store = get_job_store()
+    if await store.get_job(job_id) is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    rows = await store.get_job_attempts(job_id)
+    return [
+        JobAttemptEntry(
+            status=r["status"], error=r["error"], started_at=r["started_at"],
+            finished_at=r["finished_at"], recorded_at=r["recorded_at"],
         )
         for r in rows
     ]

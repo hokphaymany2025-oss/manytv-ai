@@ -206,6 +206,97 @@ def test_reset_job_for_retry_leaves_kind_payload_project_id_workflow_name_create
     assert row["created_at"] == 123.0
 
 
+def test_reset_job_for_retry_archives_the_overwritten_attempt(tmp_path):
+    """The one place a previously-set error/started_at/finished_at is ever
+    destroyed -- get_job_attempts must return exactly what was about to be
+    lost, so a retried job's prior failure isn't gone without a trace."""
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "queued", {"a": 1}, created_at=1.0)
+        await store.update_job_status(
+            "job-1", "failed", started_at=2.0, finished_at=3.0, error="boom",
+        )
+        await store.reset_job_for_retry("job-1", "queued")
+        return await store.get_job_attempts("job-1")
+
+    attempts = asyncio.run(scenario())
+
+    assert len(attempts) == 1
+    assert attempts[0]["job_id"] == "job-1"
+    assert attempts[0]["status"] == "failed"
+    assert attempts[0]["error"] == "boom"
+    assert attempts[0]["started_at"] == 2.0
+    assert attempts[0]["finished_at"] == 3.0
+    assert attempts[0]["recorded_at"] is not None
+
+
+def test_reset_job_for_retry_archives_a_cancelled_attempt_too(tmp_path):
+    """Cancellation itself never destroys anything -- but a cancelled job
+    can also be retried, going through the same archive-then-reset path."""
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "queued", {"a": 1}, created_at=1.0)
+        await store.update_job_status("job-1", "cancelled", started_at=2.0, finished_at=3.0)
+        await store.reset_job_for_retry("job-1", "queued")
+        return await store.get_job_attempts("job-1")
+
+    attempts = asyncio.run(scenario())
+
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "cancelled"
+    assert attempts[0]["error"] is None
+
+
+def test_multiple_retries_accumulate_attempts_in_order(tmp_path):
+    """Two failures, two retries -- get_job_attempts must return both prior
+    attempts, oldest first, not just the most recent one."""
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "queued", {"a": 1}, created_at=1.0)
+        await store.update_job_status("job-1", "failed", started_at=2.0, finished_at=3.0, error="first failure")
+        await store.reset_job_for_retry("job-1", "queued")
+        await store.update_job_status("job-1", "failed", started_at=4.0, finished_at=5.0, error="second failure")
+        await store.reset_job_for_retry("job-1", "queued")
+        return await store.get_job_attempts("job-1")
+
+    attempts = asyncio.run(scenario())
+
+    assert len(attempts) == 2
+    assert attempts[0]["error"] == "first failure"
+    assert attempts[1]["error"] == "second failure"
+
+
+def test_get_job_attempts_is_empty_for_a_job_never_retried(tmp_path):
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "queued", {"a": 1}, created_at=1.0)
+        return await store.get_job_attempts("job-1")
+
+    assert asyncio.run(scenario()) == []
+
+
+def test_get_job_attempts_scoped_to_job_id(tmp_path):
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "queued", {"a": 1}, created_at=1.0)
+        await store.create_job("job-2", "storyboard", "queued", {"a": 1}, created_at=1.0)
+        await store.update_job_status("job-1", "failed", started_at=1.0, finished_at=2.0, error="job-1 failure")
+        await store.reset_job_for_retry("job-1", "queued")
+        await store.update_job_status("job-2", "failed", started_at=1.0, finished_at=2.0, error="job-2 failure")
+        await store.reset_job_for_retry("job-2", "queued")
+        return await store.get_job_attempts("job-1")
+
+    attempts = asyncio.run(scenario())
+
+    assert len(attempts) == 1
+    assert attempts[0]["error"] == "job-1 failure"
+
+
 def test_reset_shots_by_status_only_touches_matching_rows(tmp_path):
     """A job with one DONE, one SUBMITTED, one FAILED shot: only the FAILED
     one should transition, with error/prompt_id/submitted_at/finished_at all

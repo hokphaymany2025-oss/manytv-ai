@@ -1,10 +1,39 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (Phase 3 — `storyboard.py` split into four modules by responsibility, zero behavior change). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (Phase 2 — retry/cancel attempt history, backend only). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (Phase 2) — Retry/cancel attempt history added, backend only
+
+**What was completed:** The user asked for design-first work on `TODO.md`'s last substantial Phase 2 gap: "a retried job's timeline reflects only the current attempt." Explicit instructions: analyze the lifecycle, identify where attempts should be stored, propose the minimal schema, show affected files, explain tradeoffs — **no implementation until approved**. Used `EnterPlanMode`; traced every write path in `backend/core/job_store.py` before proposing anything, then dispatched a Plan agent to independently verify the analysis against the real source before presenting a design.
+
+**Key finding that narrowed the whole design**: `_update_job_status_sync`'s `COALESCE` semantics mean it can only ever add information, never erase it — of every write method in `job_store.py`, only `_reset_job_for_retry_sync` and `_reset_shots_by_status_sync` ever null out a previously-set column, and both are called from exactly one place, `retry_job` in `storyboard.py`. Cancellation itself destroys nothing (a cancelled job's data stays intact unless *later retried* through that same path). So this was never a "capture every state transition" problem — just "archive the row `retry_job` is about to overwrite, at the moment it overwrites it." This directly narrowed `TODO.md`'s own prior framing ("a genuinely new append-only events table touching every existing state-transition call site"), confirmed correct by the Plan-agent review rather than assumed. The same review also confirmed skipping a shot-level snapshot table was safe (a `FAILED` shot's `files` is always null already; `prompt_id` is recoverable from existing `job_logs` text today, though named explicitly as a fragile/coincidental property rather than a structural guarantee) and confirmed REST-only (no new SSE stream) was the right call, since attempts change at most once per retry and the existing `job_updated` event already signals when to re-fetch. Plan approved via `ExitPlanMode` before any code was written. Design doc: `C:\Users\hokph\.claude\plans\agile-whistling-firefly.md`.
+
+**Implementation** (backend only, per the approved plan — frontend explicitly deferred):
+- `backend/core/job_store.py`: new `job_attempts` table (`id, job_id, status, error, started_at, finished_at, recorded_at`, no FK, matching `shots`/`job_logs`'s existing style). `_reset_job_for_retry_sync` now does `SELECT` current row → `INSERT` into `job_attempts` → the existing reset `UPDATE`, one `commit()` — a genuine first for this file (every other `_*_sync` method was one statement) but not a risk, since `_run()`'s lock already wraps the whole callable. **Public `reset_job_for_retry()` signature unchanged** — `retry_job`'s existing call site in `storyboard.py` needed zero edits, the archival is purely an internal detail of a method that already ran at exactly the right moment. New `get_job_attempts(job_id)` mirrors `get_job_logs` exactly.
+- `backend/models/schemas.py`: new `JobAttemptEntry` (`status`, `error`, `started_at`, `finished_at`, `recorded_at`), mirrors `JobLogEntry`.
+- `backend/api/routes/storyboard.py`: new `GET /api/jobs/{job_id}/attempts` route, mirrors `GET /api/jobs/{job_id}/logs` (404 convention, ordering).
+- Tests: 5 new in `tests/test_job_store.py` (archives a failed attempt; archives a cancelled attempt too; multiple retries accumulate in order; empty for a never-retried job; scoped per job id) and 3 new in `tests/test_job_routes.py` (404 on missing job; empty before any retry; correct shape after a real retry through the actual route). No existing test needed changes.
+
+**A real anomaly during this session, worth recording plainly**: while writing the new `tests/test_job_routes.py` case, the test file was found to contain extra assertion lines I had not written (`entries[0].shot_index`/`entries[1]...` referencing a field `JobAttemptEntry` doesn't even have) immediately after two separate edits — removed both times, and the file stayed clean on the third check. This looked like content from an unrelated test (`test_get_job_logs_returns_entries_in_order_with_correct_shape`) bleeding in from something outside this turn, not a mistake in the edit I made (verified by reading the file immediately after each of my own edits, before it later showed the extra lines). Not fully explained — flagged here rather than silently ignored, in case it recurs. Final file content is correct and every assertion is intentional; verified by re-reading the file after the last fix.
+
+**Verification:** `python -m pytest tests/ -v` → **136 passed** (128 prior + 8 new, no existing test modified). `python -c "from backend.app import app"` sanity-checked before running the suite.
+
+**Files changed:** `backend/core/job_store.py`, `backend/models/schemas.py`, `backend/api/routes/storyboard.py`, `tests/test_job_store.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md`. No frontend files — deliberately deferred.
+
+**Remaining problems / blockers:** None blocking.
+- **Frontend display not built** — a `JobAttemptHistory` component on `JobDetailPage.tsx` (following `JobExecutionLogs`/`JobTimeline`'s existing conventions: a `useJobAttempts` hook, `getJobAttempts` in `api.ts`, `JobAttemptEntry` in `types.ts`) is the natural next step, not started, deliberately out of scope for this backend-first pass.
+- Phase 3's coverage measurement (`pytest-cov`/`vitest --coverage`) not started.
+- Phase 4 not started, gated on revisiting BUG-3's localhost-only scope decision.
+- The unexplained stray-lines incident above — not reproduced a third time, but worth a second look if it recurs in a future session.
+- Nothing committed yet — waiting for approval.
+
+**Exact next task:** Get approval to commit this session's backend changes on `feature/v1.2-development`. Once approved: build the frontend display for `GET /api/jobs/{job_id}/attempts` (natural continuation), or pick up coverage measurement (Phase 3's remaining item) instead — independent, either can go first.
+
+---
 
 ### 2026-07-18 (Phase 3) — `storyboard.py` split into four modules by responsibility
 

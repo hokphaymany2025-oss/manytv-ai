@@ -100,3 +100,11 @@ class JobLogEntry(BaseModel):
     stage: str
     message: str
     shot_index: Optional[int] = None
+
+
+class JobAttemptEntry(BaseModel):
+    status: str
+    error: Optional[str] = None
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    recorded_at: float

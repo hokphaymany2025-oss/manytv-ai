@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS job_logs (
     shot_index INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs (job_id, id);
+
+CREATE TABLE IF NOT EXISTS job_attempts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id       TEXT NOT NULL,
+    status       TEXT NOT NULL,
+    error        TEXT,
+    started_at   REAL,
+    finished_at  REAL,
+    recorded_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_job_attempts_job_id ON job_attempts (job_id, id);
 """
 
 
@@ -199,6 +210,23 @@ class JobStore:
         return await self._run(self._list_jobs_sync, status_in)
 
     def _reset_job_for_retry_sync(self, job_id: str, status: str) -> None:
+        # Archive the attempt about to be overwritten before resetting it --
+        # this is the only place in this file that ever destroys a
+        # previously-set error/started_at/finished_at (every other write path
+        # uses COALESCE and can only add information, never erase it), so
+        # it's the one place a history row needs to be written. Both
+        # statements share the sync call's single commit()/lock, so a reader
+        # can never observe the row reset without its corresponding
+        # job_attempts entry already present.
+        row = self._conn.execute(
+            "SELECT status, error, started_at, finished_at FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        if row is not None:
+            self._conn.execute(
+                "INSERT INTO job_attempts (job_id, status, error, started_at, finished_at, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (job_id, row["status"], row["error"], row["started_at"], row["finished_at"], time.time()),
+            )
         self._conn.execute(
             "UPDATE jobs SET status = ?, error = NULL, result = NULL, "
             "started_at = NULL, finished_at = NULL WHERE id = ?",
@@ -212,7 +240,8 @@ class JobStore:
         semantics for those same fields mean passing None can never clear a
         previously-set value. Used ahead of a /retry re-enqueue so a stale
         error message or a completed result from the last run doesn't linger
-        on a job about to run again from a clean slate.
+        on a job about to run again from a clean slate. Archives the
+        overwritten attempt into job_attempts first -- see get_job_attempts.
         """
         await self._run_and_publish(job_id, "job_updated", self._reset_job_for_retry_sync, job_id, status)
 
@@ -337,6 +366,20 @@ class JobStore:
 
     async def get_job_logs(self, job_id: str) -> list[dict[str, Any]]:
         return await self._run(self._get_job_logs_sync, job_id)
+
+    # ---- job attempts ----
+
+    def _get_job_attempts_sync(self, job_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM job_attempts WHERE job_id = ? ORDER BY id", (job_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_job_attempts(self, job_id: str) -> list[dict[str, Any]]:
+        """Past attempts a /retry overwrote, oldest first -- see
+        reset_job_for_retry for where these rows get written. Empty for a
+        job that's never been retried (the common case)."""
+        return await self._run(self._get_job_attempts_sync, job_id)
 
 
 @lru_cache

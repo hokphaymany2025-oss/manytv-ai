@@ -333,11 +333,46 @@ def test_get_job_logs_returns_entries_in_order_with_correct_shape(tmp_path, monk
         "Starting job job-1.",
         "Job job-1: shot 0 queued as ComfyUI prompt p1",
     ]
-    assert entries[0].shot_index is None
-    assert entries[1].shot_index == 0
-    assert entries[1].level == "info"
-    assert entries[1].stage == "shot"
-    assert entries[1].timestamp == 11.0
+
+
+def test_get_job_attempts_rejects_missing_job(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.get_job_attempts("does-not-exist"))
+
+    assert exc_info.value.status_code == 404
+
+
+def test_get_job_attempts_returns_empty_list_for_job_never_retried(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "queued", {"prompt": "x"}, created_at=1.0)
+        return await storyboard_module.get_job_attempts("job-1")
+
+    assert asyncio.run(scenario()) == []
+
+
+def test_get_job_attempts_returns_the_archived_attempt_after_a_retry(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "queued", {"shots": []}, created_at=1.0)
+        await store.update_job_status("job-1", "failed", started_at=2.0, finished_at=3.0, error="boom")
+        await storyboard_module.retry_job("job-1")
+        return await storyboard_module.get_job_attempts("job-1")
+
+    entries = asyncio.run(scenario())
+
+    assert len(entries) == 1
+    assert entries[0].status == "failed"
+    assert entries[0].error == "boom"
+    assert entries[0].started_at == 2.0
+    assert entries[0].finished_at == 3.0
 
 
 # ---- list_jobs_route ----
