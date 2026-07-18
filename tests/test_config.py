@@ -6,6 +6,8 @@ wildcard, not None) unless CORS_ALLOWED_ORIGINS is explicitly configured
 (e.g. this repo's own .env now sets it, for the frontend/ dev server).
 """
 
+from pathlib import Path
+
 from backend.core.config import Settings
 
 
@@ -26,3 +28,13 @@ def test_cors_allowed_origins_parses_comma_separated_list():
 def test_cors_allowed_origins_strips_whitespace_and_drops_empties():
     settings = Settings(cors_allowed_origins=" http://127.0.0.1:5173 , , http://localhost:5173,")
     assert settings.cors_allowed_origins_list == ["http://127.0.0.1:5173", "http://localhost:5173"]
+
+
+def test_comfyui_http_url_combines_host_and_port():
+    settings = Settings(comfyui_host="192.168.1.5", comfyui_port=9000)
+    assert settings.comfyui_http_url == "http://192.168.1.5:9000"
+
+
+def test_workflow_path_wraps_workflow_dir_as_a_path():
+    settings = Settings(workflow_dir="some/workflows/dir")
+    assert settings.workflow_path == Path("some/workflows/dir")

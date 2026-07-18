@@ -37,6 +37,60 @@ async def _run_one_iteration(worker: SingleSlotWorker) -> None:
         pass
 
 
+# ---- start / stop / resubmit ----
+# Previously untested directly -- every other test in this file drives the
+# queue via _run_one_iteration rather than the real start()/stop() lifecycle
+# methods, and resubmit() was only ever exercised with worker.resubmit
+# monkeypatched out entirely (see tests/test_job_routes.py).
+
+
+def test_start_is_idempotent_and_creates_a_background_task(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    async def scenario():
+        worker.start()
+        first_task = worker._task
+        worker.start()  # second call must be a no-op, not a second task
+        second_task = worker._task
+        await worker.stop()
+        return first_task, second_task
+
+    first_task, second_task = asyncio.run(scenario())
+
+    assert first_task is not None
+    assert first_task is second_task
+
+
+def test_stop_cancels_the_task_and_clears_it(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    async def scenario():
+        worker.start()
+        await worker.stop()
+        return worker._task
+
+    assert asyncio.run(scenario()) is None
+
+
+def test_resubmit_enqueues_the_job_as_is(tmp_path):
+    """Unlike submit(), resubmit() must not create a new job or touch the
+    store -- the row already exists (backend/core/recovery.py reconstructs
+    the Job from it); this only needs to land back on the queue."""
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    job = Job(id="job-1", kind="test", payload={})
+
+    async def scenario():
+        await worker.resubmit(job)
+        return await worker._queue.get()
+
+    dequeued = asyncio.run(scenario())
+
+    assert dequeued is job
+
+
 def test_submit_creates_job_and_it_runs_to_done(tmp_path):
     store = _store(tmp_path)
     worker = SingleSlotWorker(store=store)

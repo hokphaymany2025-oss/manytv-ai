@@ -12,6 +12,8 @@ tests/test_comfyui_client.py's existing style.
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from backend.core import storyboard_engine as storyboard_engine_module
 from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings
@@ -242,6 +244,28 @@ def _prepare_storyboard_env(monkeypatch, tmp_path, store: JobStore):
 
 def _make_job(shots: list[dict]) -> Job:
     return Job(id="job-1", kind="storyboard", payload={"shots": shots, "workflow_name": "default_t2v"})
+
+
+def test_run_storyboard_job_raises_when_comfyui_is_unreachable(tmp_path, monkeypatch):
+    """Checked once, up front, before any shot row is even bootstrapped --
+    a job shouldn't be partially set up against a ComfyUI that was never
+    reachable in the first place."""
+    store = _store(tmp_path)
+    _prepare_storyboard_env(monkeypatch, tmp_path, store)
+    monkeypatch.setattr(storyboard_engine_module.comfyui_client, "health_check", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        storyboard_engine_module.comfyui_client, "queue_prompt",
+        AsyncMock(side_effect=AssertionError("must not submit anything when ComfyUI is unreachable")),
+    )
+
+    async def scenario():
+        job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
+        await storyboard_engine_module._run_storyboard_job(job)
+
+    with pytest.raises(ComfyUIError, match="not reachable"):
+        asyncio.run(scenario())
+
+    assert asyncio.run(store.get_shots("job-1")) == []
 
 
 def test_done_shot_is_skipped_not_reverified_against_comfyui(tmp_path, monkeypatch):

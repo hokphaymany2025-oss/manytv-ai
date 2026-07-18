@@ -19,6 +19,7 @@ from backend.core.config import Settings
 from backend.core.events import EventBus
 from backend.core.job_store import JobStore
 from backend.core.worker import Job, JobStatus, ShotStatus
+from backend.models.schemas import StoryboardRequest, StoryboardShot
 
 
 def _store(tmp_path) -> JobStore:
@@ -28,6 +29,70 @@ def _store(tmp_path) -> JobStore:
 def _patch_store_and_worker(monkeypatch, store: JobStore):
     monkeypatch.setattr(storyboard_module, "get_job_store", lambda: store)
     monkeypatch.setattr(storyboard_module.worker, "resubmit", AsyncMock())
+
+
+# ---- create_storyboard ----
+
+
+def test_create_storyboard_splits_script_into_shots_and_submits_job(monkeypatch):
+    fake_job = Job(id="job-1", kind="storyboard", payload={}, status=JobStatus.QUEUED)
+    monkeypatch.setattr(storyboard_module.worker, "submit", AsyncMock(return_value=fake_job))
+
+    request = StoryboardRequest(script="first shot\nsecond shot")
+
+    response = asyncio.run(storyboard_module.create_storyboard(request))
+
+    assert response.job_id == "job-1"
+    assert response.shot_count == 2
+    args, kwargs = storyboard_module.worker.submit.call_args
+    assert args[0] == "storyboard"
+    assert [s["description"] for s in args[1]["shots"]] == ["first shot", "second shot"]
+    assert kwargs["workflow_name"] == "default_t2v"
+
+
+def test_create_storyboard_uses_explicit_shots_when_provided(monkeypatch):
+    """An explicit `shots` list must be used as-is -- the script text (if
+    any) is ignored, and _naive_shot_split must not run at all."""
+    fake_job = Job(id="job-1", kind="storyboard", payload={}, status=JobStatus.QUEUED)
+    monkeypatch.setattr(storyboard_module.worker, "submit", AsyncMock(return_value=fake_job))
+
+    request = StoryboardRequest(
+        script="this text must be ignored",
+        shots=[StoryboardShot(index=0, prompt="an explicit shot")],
+    )
+
+    response = asyncio.run(storyboard_module.create_storyboard(request))
+
+    assert response.shot_count == 1
+    submitted_shots = storyboard_module.worker.submit.call_args.args[1]["shots"]
+    assert submitted_shots == [{"index": 0, "description": "", "prompt": "an explicit shot", "negative_prompt": ""}]
+
+
+def test_create_storyboard_rejects_a_script_that_produces_no_shots():
+    request = StoryboardRequest(script="   \n\t\n  ")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.create_storyboard(request))
+
+    assert exc_info.value.status_code == 400
+    assert "no shots" in exc_info.value.detail
+
+
+def test_create_storyboard_rejects_too_many_shots(monkeypatch):
+    monkeypatch.setattr(storyboard_module, "get_settings", lambda: Settings(max_shots_per_job=1))
+    request = StoryboardRequest(
+        shots=[
+            StoryboardShot(index=0, prompt="a"),
+            StoryboardShot(index=1, prompt="b"),
+        ],
+        script="",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.create_storyboard(request))
+
+    assert exc_info.value.status_code == 400
+    assert "exceeds MAX_SHOTS_PER_JOB" in exc_info.value.detail
 
 
 # ---- retry ----
@@ -270,6 +335,16 @@ def test_get_job_status_includes_job_level_timestamps(tmp_path, monkeypatch):
     assert response.created_at == 1.0
     assert response.started_at == 2.0
     assert response.finished_at == 3.0
+
+
+def test_get_job_status_rejects_missing_job(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.get_job_status("does-not-exist"))
+
+    assert exc_info.value.status_code == 404
 
 
 def test_get_job_status_includes_shot_level_timestamps(tmp_path, monkeypatch):
@@ -613,6 +688,22 @@ def test_job_events_route_rejects_missing_job(tmp_path, monkeypatch):
     assert exc_info.value.status_code == 404
 
 
+def test_job_events_route_returns_a_streaming_response_for_a_real_job(tmp_path, monkeypatch):
+    from fastapi.responses import StreamingResponse
+
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "queued", {"prompt": "x"}, created_at=1.0)
+        return await storyboard_module.job_events(_FakeRequest(), "job-1")
+
+    response = asyncio.run(scenario())
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/event-stream"
+
+
 def test_job_logs_events_stream_sends_only_new_rows(tmp_path, monkeypatch):
     store = _store(tmp_path)
     _patch_store_and_worker(monkeypatch, store)
@@ -673,6 +764,22 @@ def test_job_logs_events_route_rejects_missing_job(tmp_path, monkeypatch):
     assert exc_info.value.status_code == 404
 
 
+def test_job_logs_events_route_returns_a_streaming_response_for_a_real_job(tmp_path, monkeypatch):
+    from fastapi.responses import StreamingResponse
+
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        return await storyboard_module.job_logs_events(_FakeRequest(), "job-1")
+
+    response = asyncio.run(scenario())
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/event-stream"
+
+
 def test_all_jobs_events_stream_sends_initial_signal_then_one_per_change():
     bus = EventBus()
 
@@ -691,6 +798,15 @@ def test_all_jobs_events_stream_sends_initial_signal_then_one_per_change():
 
     assert "event: job_updated" in initial
     assert "event: job_updated" in second
+
+
+def test_all_jobs_events_route_returns_a_streaming_response():
+    from fastapi.responses import StreamingResponse
+
+    response = asyncio.run(storyboard_module.all_jobs_events(_FakeRequest()))
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/event-stream"
 
 
 def test_all_jobs_events_stream_unsubscribes_on_close():

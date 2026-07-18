@@ -1,16 +1,32 @@
-"""Direct unit tests for the pure helper functions in
-backend/core/storyboard_engine.py: _naive_shot_split (script -> shot list)
-and _apply_shot_to_workflow (shot -> patched ComfyUI workflow JSON). Both
-were previously only exercised indirectly through _run_storyboard_job
-integration-style tests (see TODO.md item 13) -- these test them in
-isolation, matching this repo's existing "test logic, not just through the
-route" convention (e.g. JobTimeline's buildTimelineEvents on the frontend).
+"""Direct unit tests for the pure(-ish) helper functions in
+backend/core/storyboard_engine.py: _naive_shot_split (script -> shot list),
+_load_workflow (workflow name -> parsed JSON), _apply_shot_to_workflow
+(shot -> patched ComfyUI workflow JSON), and _save_history_outputs (ComfyUI
+history -> downloaded files). All were previously only exercised indirectly
+through _run_storyboard_job integration-style tests (see TODO.md item 13)
+-- these test them in isolation, matching this repo's existing "test logic,
+not just through the route" convention (e.g. JobTimeline's
+buildTimelineEvents on the frontend).
 
-Plain synchronous functions, no async/store/worker dependencies -- no
-asyncio.run() or monkeypatching needed, unlike most of this test suite.
+_naive_shot_split/_apply_shot_to_workflow are plain synchronous functions --
+no asyncio.run() or monkeypatching needed for those. _save_history_outputs
+is async (a fake ComfyUIClient stand-in is used instead of a live one).
 """
 
-from backend.core.storyboard_engine import _apply_shot_to_workflow, _naive_shot_split
+import asyncio
+import json
+from unittest.mock import AsyncMock
+
+import pytest
+
+from backend.core.comfyui_client import ComfyUIError
+from backend.core.config import Settings
+from backend.core.storyboard_engine import (
+    _apply_shot_to_workflow,
+    _load_workflow,
+    _naive_shot_split,
+    _save_history_outputs,
+)
 from backend.models.schemas import StoryboardShot
 
 
@@ -60,6 +76,31 @@ def test_naive_shot_split_sets_description_equal_to_prompt_and_empty_negative_pr
     assert shot.description == "a lone tree on a hill"
     assert shot.prompt == "a lone tree on a hill"
     assert shot.negative_prompt == ""
+
+
+# ---- _load_workflow ----
+# Previously only exercised indirectly, always with _load_workflow itself
+# monkeypatched out to a stub in tests/test_recovery.py's shot-reconciliation
+# tests -- the real function body (a real filesystem read) had no direct
+# coverage anywhere until now.
+
+
+def test_load_workflow_reads_and_parses_a_real_workflow_file(tmp_path):
+    workflow_dir = tmp_path / "workflows"
+    workflow_dir.mkdir()
+    (workflow_dir / "my_workflow.json").write_text(json.dumps({"1": {"class_type": "KSampler"}}))
+    settings = Settings(workflow_dir=str(workflow_dir))
+
+    workflow = _load_workflow("my_workflow", settings)
+
+    assert workflow == {"1": {"class_type": "KSampler"}}
+
+
+def test_load_workflow_raises_comfyui_error_when_file_is_missing(tmp_path):
+    settings = Settings(workflow_dir=str(tmp_path / "workflows"))
+
+    with pytest.raises(ComfyUIError, match="not found"):
+        _load_workflow("does-not-exist", settings)
 
 
 # ---- _apply_shot_to_workflow ----
@@ -161,3 +202,45 @@ def test_apply_shot_to_workflow_does_not_mutate_the_original_workflow():
     # a no-op copy that happens to look unchanged.
     assert patched["1"]["inputs"]["text"] == "a brand new prompt"
     assert patched["2"]["inputs"]["text"] == "a brand new negative"
+
+
+# ---- _save_history_outputs ----
+# The "happy path" (a well-formed history with real dict entries) is already
+# exercised indirectly via tests/test_recovery.py's shot-completion tests --
+# these cover the two skip branches specifically, which weren't reachable
+# from any existing test.
+
+
+def test_save_history_outputs_skips_non_list_node_output_values(tmp_path):
+    """A node_output value that isn't a list (ComfyUI's history shape in
+    practice, but not guaranteed by any schema this client controls) must be
+    skipped rather than raising -- and fetch_output_bytes must never be
+    called for it."""
+    client = AsyncMock()
+    client.fetch_output_bytes.side_effect = AssertionError("must not be called for a non-list value")
+    history = {"outputs": {"10": {"not_a_list": "unexpected string value"}}}
+
+    saved = asyncio.run(_save_history_outputs(client, history, tmp_path))
+
+    assert saved == []
+
+
+def test_save_history_outputs_skips_entries_missing_filename(tmp_path):
+    client = AsyncMock()
+    client.fetch_output_bytes.side_effect = AssertionError("must not be called for a malformed entry")
+    history = {"outputs": {"10": {"gifs": ["not a dict", {"subfolder": "", "type": "output"}]}}}
+
+    saved = asyncio.run(_save_history_outputs(client, history, tmp_path))
+
+    assert saved == []
+
+
+def test_save_history_outputs_downloads_and_saves_valid_entries(tmp_path):
+    client = AsyncMock()
+    client.fetch_output_bytes.return_value = b"fake video bytes"
+    history = {"outputs": {"10": {"gifs": [{"filename": "shot0.mp4", "subfolder": "", "type": "output"}]}}}
+
+    saved = asyncio.run(_save_history_outputs(client, history, tmp_path))
+
+    assert saved == [str(tmp_path / "shot0.mp4")]
+    assert (tmp_path / "shot0.mp4").read_bytes() == b"fake video bytes"

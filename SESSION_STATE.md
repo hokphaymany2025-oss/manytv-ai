@@ -1,10 +1,56 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (Phase 3 — backend test coverage measurement added via `pytest-cov`, 85% overall). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint — state verification only, no code changes). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint` to verify and record current session state. No application logic touched, per the checkpoint task's explicit constraint.
+
+- **Branch:** `feature/v1.2-development`, up to date with `origin/feature/v1.2-development` (0 ahead/behind).
+- **Working tree:** matches exactly what the prior session ("Phase 3, continued") left uncommitted — `SESSION_STATE.md`, `TODO.md`, and five modified test files (`tests/test_config.py`, `tests/test_job_routes.py`, `tests/test_recovery.py`, `tests/test_storyboard_helpers.py`, `tests/test_worker.py`), plus two new untracked test files (`tests/test_generate_script_route.py`, `tests/test_llm_client.py`) and an untracked `.claude/` directory. Nothing unexpected found; still uncommitted, still waiting on the same approval named in the prior entry.
+- **Backend tests:** `python -m pytest --cov=backend --cov-report=term-missing tests/ -v` → **164 passed**, **91% overall coverage** (893 statements, 78 missed) — confirms the prior session's reported numbers still hold exactly.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — higher than the last-recorded 55, consistent with `JobAttemptHistory` UI tests (`52ccbab`) landing since that count was last written down.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings already named in earlier entries (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`), unrelated to any uncommitted change.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Remaining problems / blockers:** None new. Same as the prior entry:
+- Nothing from this branch's recent work has been committed since `f1c7802` — waiting on approval to commit the coverage-test additions.
+- Frontend coverage measurement (`vitest --coverage`) still not started.
+
+**Exact next task:** Same as before — get approval to commit the pending test-only diff (`tests/test_llm_client.py`, `tests/test_generate_script_route.py`, the five modified test files, `TODO.md`, `SESSION_STATE.md`) on `feature/v1.2-development`.
+
+---
+
+### 2026-07-19 (Phase 3, continued) — Backend coverage raised from 85% to 91.27%
+
+**What was completed:** Continued directly from the coverage-tooling session below. Task: "improve backend coverage from 85% toward 90%," explicitly tests-only, no application behavior changes, prioritizing pure logic over anything needing a live Ollama/ComfyUI/GPU.
+
+Read the actual coverage report's `Missing` line ranges file-by-file rather than guessing what to add — this surfaced two real, notable gaps that had nothing to do with live services at all: **`backend/core/llm_client.py` and `backend/api/routes/generate_script.py` had zero direct test coverage of any kind** (no `tests/test_llm_client.py` existed; `create_storyboard`, the actual `POST /api/storyboard` route, had never been called by any test either, despite `retry`/`cancel`/`get_job_status`/etc. all being thoroughly tested). These two files alone accounted for 19 of the 130 original missed lines and were both fully mockable (the OpenAI/Ollama call and the worker queue are exactly the kind of boundary this test suite already mocks elsewhere) — closing them was the highest-value, lowest-risk work in this session.
+
+- New `tests/test_llm_client.py` (6 cases) — `LLMClient.generate_script` success, `<think>`-block stripping (the documented Qwen3/Ollama quirk), empty-result-after-stripping, `APIConnectionError`/`APIStatusError` → `LLMError`, and the exact user-message construction. Mocks at the `_client.chat.completions.create` boundary via a hand-rolled fake completion object, matching `test_comfyui_client.py`'s existing "monkeypatch one bound method on a real instance" convention rather than reaching for a mocking library. `llm_client.py`: 52% → 100%.
+- New `tests/test_generate_script_route.py` (3 cases) — the job handler and the route itself, previously exercised by nothing. `generate_script.py`: 68% → 100%.
+- `tests/test_job_routes.py` (+11): `create_storyboard` (script-splitting, explicit shots, empty-script rejection, too-many-shots rejection); the three streaming routes' success-path return value (`job_events`/`job_logs_events`/`all_jobs_events` were each only ever tested for their 404 branch, never confirmed to actually return a `StreamingResponse` for a real job); `get_job_status`'s own missing-job 404 (every other test always pre-creates the job). `storyboard.py` routes: 90% → 100%. `job_responses.py`: 95% → 100%.
+- `tests/test_config.py` (+2), `tests/test_storyboard_helpers.py` (+5: `_load_workflow` real read + not-found error, `_save_history_outputs`'s two skip branches + happy path), `tests/test_recovery.py` (+1: `_run_storyboard_job` raising when ComfyUI's health check fails up front), `tests/test_worker.py` (+3: `start()`/`stop()`/`resubmit()`, never called directly by any existing test — everything else drives the queue via a `_run_one_iteration` helper or monkeypatches `resubmit` out entirely).
+- **Deliberately left alone** (named, not chased for the last few percent): `comfyui_client.py` (53%, real WS/HTTP internals beyond what's already mocked), `gpu_memory.py` (56%, genuinely GPU/torch-optional), `app.py` (67%, real process lifespan), `sse.py`'s keepalive-timeout branches (84%), `storyboard_engine.py`'s progress-callback/timeout-drain branches (91%) — all doable with more elaborate fakes but not needed to clear the 90% target. `events.py`'s 2-line `except asyncio.QueueEmpty` branch is a genuinely different case: confirmed **unreachable in practice** (nothing can run between the `.full()` check and the immediately-following `.get_nowait()` in single-threaded asyncio), so left alone as dead defensive code rather than forced with a contrived test.
+
+**Result:** `python -m pytest --cov=backend --cov-report=term-missing tests/ -v` → **164 passed** (136 prior + 28 new). **91.27% overall** (893 statements, 78 missed — down from 130). `python -m pytest tests/ -v` (plain, matching `.github/workflows/ci.yml`'s exact invocation) also confirmed green. Full per-file breakdown in `TODO.md`'s new Completed entry.
+
+**Files changed:** `tests/test_llm_client.py` (new), `tests/test_generate_script_route.py` (new), `tests/test_job_routes.py`, `tests/test_config.py`, `tests/test_storyboard_helpers.py`, `tests/test_recovery.py`, `tests/test_worker.py`, `TODO.md`, `SESSION_STATE.md`. No `backend/` source files touched — confirmed by `git status` before finishing, matching the task's explicit constraint.
+
+**Remaining problems / blockers:** None blocking.
+- Frontend coverage measurement (`vitest --coverage`) still not started.
+- The named-and-deliberately-skipped files above remain at their current coverage levels — informational, not a new to-do list; revisit only if a specific bug in one of them makes it worthwhile.
+- Nothing committed yet — waiting for review, per this session's explicit instruction.
+
+**Exact next task:** Review this session's test-only diff, then get approval to commit (`tests/test_llm_client.py`, `tests/test_generate_script_route.py`, the five modified test files, `TODO.md`, `SESSION_STATE.md`) on `feature/v1.2-development`. The prior session's coverage-tooling changes are already committed (`f1c7802` — confirmed via `git log`, not assumed).
+
+---
 
 ### 2026-07-19 (Phase 3) — Backend test coverage measurement added
 
