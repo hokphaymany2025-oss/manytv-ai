@@ -1,6 +1,6 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (CI fix session — root cause of the long-standing GitHub Actions failure found and fixed). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (CI fix session — root cause found, fixed, committed, and confirmed green on a real GitHub Actions run for the first time in this repository's history). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
@@ -17,16 +17,17 @@ User then supplied the actual GitHub Actions traceback: `ModuleNotFoundError: No
 **Fix applied — the smallest of several viable options, approved before making the change:** [.github/workflows/ci.yml:22](.github/workflows/ci.yml#L22) changed from `pytest tests/ -v` to `python -m pytest tests/ -v` — a one-line change, exactly matching the invocation this project's local testing has always used. Not touched: `requirements.txt`, any test file, any application code. Named but deliberately not applied (would close the gap more permanently but wasn't the smallest fix asked for): a root-level `conftest.py` or a `pytest.ini`/`pyproject.toml` `pythonpath = .` setting, which would fix this for *any* invocation style, not just CI's.
 
 - **Verification:** `python -m pytest tests/ -v` (project's own `.venv`) → **128 passed, 1 warning in 47.51s** — no regressions, no other files touched.
+- **Committed** as `b1c9981` — "Fix GitHub Actions pytest module path" (2 files, +26/-2).
+- **Confirmed green on a real GitHub Actions run — the first passing CI run in this repository's history.** GitHub's Actions REST API (unauthenticated, same public-repo read path used to find the original bug) shows run #5 for commit `b1c9981c56` with `conclusion: "success"`, immediately following run #4's `failure` for `0790c0a` — independently verified, not just taken on report. The commit is already on `origin/master` (confirmed via `git status`/ahead-behind, 0/0) even though it wasn't pushed from within this conversation — consistent with the same out-of-band push pattern seen with `cb090d7`/`0790c0a` earlier.
 
 **Files changed:** `.github/workflows/ci.yml` (one line), `SESSION_STATE.md`.
 
-**Remaining problems / blockers:** None blocking.
-- **This session's change is not yet committed — waiting for approval before committing, per explicit instruction.**
-- Whether the fixed workflow actually goes green on GitHub still isn't directly confirmed (needs a real push to trigger it) — the fix is verified locally via the identical invocation, not yet observed passing on an actual GitHub-hosted runner.
+**Remaining problems / blockers:** None blocking. **CI milestone fully closed** — this was the last "never actually confirmed working" item that had been carried in every session's blockers list since CI was first added.
 - The residual "bare `pytest` still breaks for anyone who doesn't type `-m`" gap is named above, not solved — a future session could add a root `conftest.py` or `pythonpath = .` if this becomes a recurring papercut.
+- No release tag yet for the work since `v1.1-sse` (`0790c0ad44`) — `cb090d7` (SSE), `0790c0a` (storyboard helper tests), and now `b1c9981` (this CI fix) are all untagged. Recommended, not yet created: **`v1.1.1-ci-fix`** (patch-level, since this is an infra/tooling fix rather than a new feature — the existing tags are all feature milestones).
 - All other previously-open low-priority items (SSE trade-offs, no log retention, un-cached artifact `stat()`, BUG-5, no dependency lockfile) unchanged, not in scope this session.
 
-**Exact next task:** Get approval, then commit this session's one-line `.github/workflows/ci.yml` fix. After that, push and confirm the workflow actually goes green on GitHub for the first time.
+**Exact next task:** Create the next release tag (recommended: `v1.1.1-ci-fix` on `b1c9981`) once approved — not yet done.
 
 ---
 
