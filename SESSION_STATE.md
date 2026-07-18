@@ -1,10 +1,29 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (SSE migration session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (storyboard helper test-coverage session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (yet later) — Test coverage extended to storyboard.py's pure helper functions
+
+**What was completed:** Resumed via the user's standard "read TODO.md/SESSION_STATE.md, confirm git state, summarize, recommend next task, wait for approval" checklist. Confirmed HEAD `cb090d7` (the prior session's SSE migration, already committed), clean tree, 114/53 passing tests — and corrected a stale claim in this file's own "Recommended entry point" section, which still said the SSE changes "were not yet committed" even though they were, one turn earlier in the same conversation. `TODO.md`'s own backlog was down to bookkeeping/accepted-tradeoff items except one genuine leftover: direct test coverage for `storyboard.py`'s `_naive_shot_split`/`_apply_shot_to_workflow` (item 13, previously only exercised indirectly via `_run_storyboard_job`). Presented that as the recommended next task alongside two smaller non-coding loose ends (push `cb090d7` to `origin`; confirm CI fires) and waited for direction — user confirmed item 13.
+
+- **New `tests/test_storyboard_helpers.py`** (14 cases, no async/store/worker dependencies needed since both functions are plain synchronous helpers): `_naive_shot_split` — empty script, whitespace-only script, blank lines skipped without leaving a gap in the assigned indices, sequential zero-based index assignment, per-line whitespace stripping, `description`/`prompt` set equal with `negative_prompt` always empty. `_apply_shot_to_workflow` — positive-node text set from `shot.prompt`, case-insensitive `CLIPTextEncode` title matching (`"POSITIVE"`, `"  Positive  "`, mixed case), the documented "an empty `shot.negative_prompt` must not clobber the workflow's own default negative text" behavior, three separate no-op cases (non-`CLIPTextEncode` node, `CLIPTextEncode` with an unrecognized title, `CLIPTextEncode` missing `_meta` entirely), and confirming the deep-copy invariant — the *original* workflow dict's text is unchanged after the call while the *returned* copy's text really did change (not just a no-op copy that happens to look identical).
+- **Zero production code changes** — every one of the 14 tests passed against the existing implementation on the first run; every documented/assumed behavior held exactly as `storyboard.py`'s own code comments already described. `python -m pytest tests/ -v` → **128 passed** (114 prior + 14 new).
+
+**Files changed:** `tests/test_storyboard_helpers.py` (new), `TODO.md`, `SESSION_STATE.md`. No backend/frontend source files touched. No live services needed or started — pure unit-test work.
+
+**Remaining problems / blockers:** None blocking.
+- Commit `cb090d7` (last session's SSE migration) still hasn't been pushed to `origin`.
+- Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed.
+- All the SSE-related informational/accepted-tradeoff items from the last session (single-process assumption, browser connection cap, no custom SSE headers, the 404-signaling compromise), no retention/pruning for `job_logs`, and un-cached per-artifact `stat()` remain open by design — none were in scope for this session.
+- **This session's changes (one new test file) are not yet committed — waiting for approval before committing, per explicit instruction.**
+
+**Exact next task:** Get approval, then commit this session's `tests/test_storyboard_helpers.py` addition. Independently: push `cb090d7` to `origin`, and confirm CI fires for real.
+
+---
 
 ### 2026-07-18 (latest) — Frontend polling replaced with Server-Sent Events
 
@@ -476,20 +495,20 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, Job Execution Logs, Job Output Artifacts, and (as of this session) a full migration from frontend polling to Server-Sent Events are all done and live-validated (see the `2026-07-18 (latest)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- **This repo has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
-- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's SSE migration changes were not yet committed** as of this entry.
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, Job Execution Logs, Job Output Artifacts, a full migration from frontend polling to Server-Sent Events, and (as of this session) direct test coverage for `storyboard.py`'s pure helper functions are all done (see the `2026-07-18 (yet later)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- **This repo has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`. The SSE migration commit (`cb090d7`) still hasn't been pushed there. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
+- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's one new test file was not yet committed** as of this entry, deliberately waiting for explicit approval per the user's instruction.
 - `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests, including two real jobs with genuine ComfyUI-produced `.mp4` files (`7ec76e91...`, `bc89fff6...`) useful for future live checks of anything artifact-related.
-- **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
-- Backend: 114 tests passing (`python -m pytest tests/ -v`). Frontend: 53 tests passing (`cd frontend && npm run test`).
+- **No live services running** — this session was pure unit-test work, nothing was started.
+- Backend: 128 tests passing (`python -m pytest tests/ -v`). Frontend: 53 tests passing (`cd frontend && npm run test`, unchanged this session).
 
-**Exact next task:** Commit this session's SSE migration changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
+**Exact next task:** Get approval, then commit this session's `tests/test_storyboard_helpers.py` addition. Independently: push `cb090d7` to `origin`, and confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
 
 **Commands to resume:**
 ```powershell
 cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
-python -m pytest tests/ -v        # confirm still 114 passed
+python -m pytest tests/ -v        # confirm still 128 passed
 cd frontend && npm run test       # confirm still 53 passed
 ```
