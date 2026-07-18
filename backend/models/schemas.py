@@ -86,3 +86,11 @@ class JobStatusResponse(BaseModel):
     created_at: Optional[float] = None
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
+
+
+class JobLogEntry(BaseModel):
+    timestamp: float
+    level: str
+    stage: str
+    message: str
+    shot_index: Optional[int] = None

@@ -1,4 +1,5 @@
 import type {
+  JobLogEntry,
   JobStatusResponse,
   ScriptGenerationRequest,
   ScriptGenerationResponse,
@@ -56,6 +57,10 @@ export function retryJob(jobId: string): Promise<JobStatusResponse> {
 
 export function cancelJob(jobId: string): Promise<JobStatusResponse> {
   return request(`/api/jobs/${jobId}/cancel`, { method: 'POST' })
+}
+
+export function getJobLogs(jobId: string): Promise<JobLogEntry[]> {
+  return request(`/api/jobs/${jobId}/logs`)
 }
 
 // filePath is whatever backend/api/routes/storyboard.py's shot loop stored

@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS shots (
     finished_at   REAL,
     PRIMARY KEY (job_id, shot_index)
 );
+
+CREATE TABLE IF NOT EXISTS job_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id     TEXT NOT NULL,
+    timestamp  REAL NOT NULL,
+    level      TEXT NOT NULL,
+    stage      TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    shot_index INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs (job_id, id);
 """
 
 
@@ -254,6 +265,56 @@ class JobStore:
         history-reconcile-or-resubmit branch unmodified.
         """
         await self._run(self._reset_shots_by_status_sync, job_id, from_status, to_status)
+
+    # ---- job logs ----
+
+    def _add_job_log_sync(
+        self, job_id: str, timestamp: float, level: str, stage: str,
+        message: str, shot_index: Optional[int],
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO job_logs (job_id, timestamp, level, stage, message, shot_index) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (job_id, timestamp, level, stage, message, shot_index),
+        )
+        self._conn.commit()
+
+    async def add_job_log(
+        self,
+        job_id: str,
+        level: str,
+        stage: str,
+        message: str,
+        shot_index: Optional[int] = None,
+        timestamp: Optional[float] = None,
+    ) -> None:
+        """Persists one curated, human-readable execution-log line for a job.
+
+        Deliberately not everything logged via the stdlib `logging` module --
+        only the narrative subset (lifecycle transitions, warnings, errors)
+        curated call-site by call-site; high-frequency progress ticks are
+        never routed here. No retry-time reset exists (unlike
+        reset_job_for_retry/reset_shots_by_status) -- a retried job's log
+        keeps every past attempt's lines alongside the new attempt's.
+
+        `timestamp` defaults to now, but callers that captured the moment an
+        event actually happened earlier than the call itself (e.g. an event
+        drained from a buffer after some later `await` resolves) should pass
+        that captured value instead, so the persisted order reflects reality
+        rather than when it happened to get flushed.
+        """
+        await self._run(
+            self._add_job_log_sync, job_id, timestamp or time.time(), level, stage, message, shot_index,
+        )
+
+    def _get_job_logs_sync(self, job_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM job_logs WHERE job_id = ? ORDER BY id", (job_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_job_logs(self, job_id: str) -> list[dict[str, Any]]:
+        return await self._run(self._get_job_logs_sync, job_id)
 
 
 @lru_cache

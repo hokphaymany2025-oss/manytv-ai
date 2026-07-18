@@ -92,6 +92,44 @@ def test_wait_for_completion_falls_back_to_polling_on_dropped_socket(monkeypatch
     assert result["outputs"]["1"]["filename"] == "shot.mp4"
 
 
+def test_wait_for_completion_relays_ws_dropped_event_to_on_progress(monkeypatch):
+    """The WS-drop-falls-back-to-polling warning is otherwise invisible
+    outside this client's own console logger -- storyboard.py's job-level
+    execution log (see TODO.md's Job Execution Logs feature) relies on this
+    relay through the existing on_progress callback (unchanged signature,
+    still a plain sync callable) to persist it. Confirms the synthetic
+    message is passed through before falling back to polling."""
+    client = _client()
+
+    class DroppedSocket:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def recv(self):
+            raise OSError("connection dropped mid-generation")
+
+    def fake_connect(*args, **kwargs):
+        return DroppedSocket()
+
+    monkeypatch.setattr(websockets, "connect", fake_connect)
+
+    async def fake_poll(prompt_id, poll_interval_seconds):
+        return {"outputs": {"1": {"filename": "shot.mp4"}}}
+
+    monkeypatch.setattr(client, "_poll_history_until_done", fake_poll)
+
+    received = []
+    result = asyncio.run(client.wait_for_completion("abc123", on_progress=received.append))
+
+    assert len(received) == 1
+    assert received[0]["type"] == "ws_dropped_fallback_polling"
+    assert received[0]["prompt_id"] == "abc123"
+    assert result["outputs"]["1"]["filename"] == "shot.mp4"
+
+
 def test_wait_for_completion_still_raises_on_execution_error(monkeypatch):
     """A real ComfyUI-reported failure (not a dropped connection) must
     still fail the job -- only connection drops get the polling fallback."""

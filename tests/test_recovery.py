@@ -80,6 +80,9 @@ def test_resubmit_row_transitions_running_to_resuming(tmp_path):
     resumed_job: Job = worker.resubmit.call_args.args[0]
     assert resumed_job.status == JobStatus.RESUMING
 
+    logs = asyncio.run(store.get_job_logs("job-1"))
+    assert any("marked RESUMING" in entry["message"] for entry in logs)
+
 
 def test_resubmit_row_leaves_queued_jobs_queued(tmp_path):
     """A job that never started needs no RESUMING transition -- nothing was
@@ -317,6 +320,12 @@ def test_submitted_shot_with_history_found_is_reused_not_resubmitted(tmp_path, m
     assert shots[0]["status"] == ShotStatus.DONE.value
     assert shots[0]["prompt_id"] == "old-prompt"
 
+    logs = asyncio.run(store.get_job_logs("job-1"))
+    assert any(
+        entry["stage"] == "resume" and "reusing" in entry["message"] and entry["shot_index"] == 0
+        for entry in logs
+    )
+
 
 def test_submitted_shot_with_no_history_is_resubmitted_fresh(tmp_path, monkeypatch):
     """If ComfyUI has no memory of the prompt at all (get_history raises
@@ -350,6 +359,12 @@ def test_submitted_shot_with_no_history_is_resubmitted_fresh(tmp_path, monkeypat
     assert shots[0]["prompt_id"] == "resubmitted-prompt"
     storyboard_module.comfyui_client.queue_prompt.assert_awaited_once()
 
+    logs = asyncio.run(store.get_job_logs("job-1"))
+    assert any(
+        entry["stage"] == "resume" and "resubmitting" in entry["message"] and entry["shot_index"] == 0
+        for entry in logs
+    )
+
 
 def test_submitted_shot_with_comfyui_unreachable_propagates_without_resubmitting(tmp_path, monkeypatch):
     """A non-ComfyUIError from get_history (e.g. a real connection error)
@@ -379,6 +394,39 @@ def test_submitted_shot_with_comfyui_unreachable_propagates_without_resubmitting
         raised = True
 
     assert raised
+
+
+def test_shot_generation_failure_writes_shot_level_error_log_entry(tmp_path, monkeypatch):
+    """Before this feature, a shot-level failure only ever surfaced as the
+    job-level "Job %s failed." line in worker.py -- no logger call existed
+    at either except block in the shot loop at all. Confirms the new
+    add_job_log calls there (a genuinely new capture point, not just
+    persisting an existing console line) land with the shot_index attached."""
+    store = _store(tmp_path)
+    _prepare_storyboard_env(monkeypatch, tmp_path, store)
+    monkeypatch.setattr(storyboard_module.comfyui_client, "queue_prompt", AsyncMock(return_value="prompt-0"))
+    monkeypatch.setattr(
+        storyboard_module.comfyui_client, "wait_for_completion",
+        AsyncMock(side_effect=RuntimeError("generation crashed")),
+    )
+
+    async def scenario():
+        job = _make_job([{"index": 0, "description": "", "prompt": "p", "negative_prompt": ""}])
+        await storyboard_module._run_storyboard_job(job)
+
+    try:
+        asyncio.run(scenario())
+        raised = False
+    except RuntimeError:
+        raised = True
+
+    assert raised
+
+    logs = asyncio.run(store.get_job_logs("job-1"))
+    failure_entries = [e for e in logs if e["level"] == "error" and e["stage"] == "shot"]
+    assert len(failure_entries) == 1
+    assert failure_entries[0]["shot_index"] == 0
+    assert "generation crashed" in failure_entries[0]["message"]
 
 
 def test_shot_loop_raises_job_cancelled_when_status_is_cancelling(tmp_path, monkeypatch):

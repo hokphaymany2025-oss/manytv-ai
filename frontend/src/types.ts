@@ -49,3 +49,11 @@ export interface JobStatusResponse {
   started_at: number | null
   finished_at: number | null
 }
+
+export interface JobLogEntry {
+  timestamp: number
+  level: string
+  stage: string
+  message: string
+  shot_index: number | null
+}

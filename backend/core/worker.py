@@ -65,6 +65,19 @@ class ShotStatus(str, Enum):
     FAILED = "failed"        # execution_error, timeout, or download failure
 
 
+class LogLevel(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class LogStage(str, Enum):
+    JOB = "job"          # job-level lifecycle: started, done, failed, cancelled, retried
+    SHOT = "shot"        # per-shot: queued, done, failed
+    RESUME = "resume"    # startup reconciliation after a backend restart
+    COMFYUI = "comfyui"  # ComfyUI-connection-level events (currently: the WS-drop fallback)
+
+
 class JobCancelled(Exception):
     """Raised from inside a job handler's cooperative cancellation check
     (see _run_storyboard_job) once it observes the job's persisted status is
@@ -159,6 +172,10 @@ class SingleSlotWorker:
                         job.id, JobStatus.CANCELLED.value, finished_at=time.time(),
                     )
                 logger.info("Job %s was cancelled before it started running; skipping.", job.id)
+                await self._store.add_job_log(
+                    job.id, LogLevel.INFO.value, LogStage.JOB.value,
+                    f"Job {job.id} was cancelled before it started running; skipping.",
+                )
                 self._queue.task_done()
                 continue
 
@@ -166,6 +183,9 @@ class SingleSlotWorker:
             job.started_at = time.time()
             logger.info("Starting job %s (%s).", job.id, job.kind)
             await self._store.update_job_status(job.id, JobStatus.RUNNING.value, started_at=job.started_at)
+            await self._store.add_job_log(
+                job.id, LogLevel.INFO.value, LogStage.JOB.value, f"Starting job {job.id} ({job.kind})."
+            )
             try:
                 handler = self._handlers.get(job.kind)
                 if handler is None:
@@ -174,15 +194,25 @@ class SingleSlotWorker:
                 job.status = JobStatus.DONE
                 elapsed = time.time() - job.started_at
                 logger.info("Job %s completed in %.1fs.", job.id, elapsed)
+                await self._store.add_job_log(
+                    job.id, LogLevel.INFO.value, LogStage.JOB.value,
+                    f"Job {job.id} completed in {elapsed:.1f}s.",
+                )
             except asyncio.CancelledError:
                 raise
             except JobCancelled:
                 job.status = JobStatus.CANCELLED
                 logger.info("Job %s cancelled.", job.id)
+                await self._store.add_job_log(
+                    job.id, LogLevel.INFO.value, LogStage.JOB.value, f"Job {job.id} cancelled."
+                )
             except Exception as exc:
                 job.status = JobStatus.FAILED
                 job.error = str(exc)
                 logger.exception("Job %s failed.", job.id)
+                await self._store.add_job_log(
+                    job.id, LogLevel.ERROR.value, LogStage.JOB.value, f"Job {job.id} failed: {job.error}"
+                )
             finally:
                 job.finished_at = time.time()
                 await self._store.update_job_status(

@@ -253,6 +253,87 @@ def test_reset_shots_by_status_is_noop_when_none_match(tmp_path):
     assert rows[0]["files"] == '["a.mp4"]'
 
 
+def test_add_job_log_and_get_job_logs_round_trips_fields(tmp_path):
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.add_job_log("job-1", "info", "job", "Starting job job-1.", timestamp=100.0)
+        await store.add_job_log("job-1", "error", "shot", "Shot 0 failed.", shot_index=0, timestamp=101.0)
+        return await store.get_job_logs("job-1")
+
+    rows = asyncio.run(scenario())
+
+    assert rows[0]["level"] == "info"
+    assert rows[0]["stage"] == "job"
+    assert rows[0]["message"] == "Starting job job-1."
+    assert rows[0]["shot_index"] is None
+    assert rows[0]["timestamp"] == 100.0
+
+    assert rows[1]["level"] == "error"
+    assert rows[1]["shot_index"] == 0
+    assert rows[1]["timestamp"] == 101.0
+
+
+def test_get_job_logs_ordered_by_insertion_even_with_identical_timestamps(tmp_path):
+    """Two lines can share an identical time.time() value (coarse timer
+    resolution, or an explicit same-instant timestamp like the capture-then-
+    drain path in storyboard.py uses) -- insertion order (the id
+    autoincrement) must still break the tie deterministically rather than
+    leaving SQLite's tie-break unspecified."""
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.add_job_log("job-1", "info", "job", "first", timestamp=5.0)
+        await store.add_job_log("job-1", "info", "job", "second", timestamp=5.0)
+        await store.add_job_log("job-1", "info", "job", "third", timestamp=5.0)
+        return await store.get_job_logs("job-1")
+
+    rows = asyncio.run(scenario())
+
+    assert [r["message"] for r in rows] == ["first", "second", "third"]
+
+
+def test_get_job_logs_scoped_to_job_id(tmp_path):
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.add_job_log("job-1", "info", "job", "for job 1")
+        await store.add_job_log("job-2", "info", "job", "for job 2")
+        return await store.get_job_logs("job-1")
+
+    rows = asyncio.run(scenario())
+
+    assert len(rows) == 1
+    assert rows[0]["message"] == "for job 1"
+
+
+def test_get_job_logs_returns_empty_list_when_none_exist(tmp_path):
+    store = _store(tmp_path)
+    assert asyncio.run(store.get_job_logs("job-1")) == []
+
+
+def test_job_logs_are_not_cleared_by_reset_job_for_retry_or_reset_shots_by_status(tmp_path):
+    """Deliberate, confirmed behavior: unlike started_at/finished_at/error
+    (cleared by reset_job_for_retry) and a shot's error/prompt_id/submitted_at/
+    finished_at (cleared by reset_shots_by_status), job_logs rows from a
+    prior attempt are never cleared -- a retried job's log keeps every past
+    attempt's lines alongside the new attempt's."""
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "failed", {"a": 1}, created_at=1.0)
+        await store.upsert_shot("job-1", 0, "failed", error="boom")
+        await store.add_job_log("job-1", "error", "job", "Job job-1 failed: boom")
+        await store.add_job_log("job-1", "error", "shot", "boom", shot_index=0)
+        await store.reset_job_for_retry("job-1", "queued")
+        await store.reset_shots_by_status("job-1", "failed", "pending")
+        return await store.get_job_logs("job-1")
+
+    rows = asyncio.run(scenario())
+
+    assert len(rows) == 2
+
+
 def test_concurrent_access_does_not_raise_sqlite_interface_error(tmp_path):
     """Regression test: a real browser polling several jobs' GET /api/jobs/{id}
     at once genuinely produced `sqlite3.InterfaceError: bad parameter or
@@ -278,6 +359,8 @@ def test_concurrent_access_does_not_raise_sqlite_interface_error(tmp_path):
             await store.upsert_shot(job_id, 0, "pending")
             await store.get_shots(job_id)
             await store.list_jobs(status_in=["queued", "running"])
+            await store.add_job_log(job_id, "info", "job", f"hammer {i}")
+            await store.get_job_logs(job_id)
 
         await asyncio.gather(*(hammer(i) for i in range(200)))
 

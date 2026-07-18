@@ -116,6 +116,8 @@ class ComfyUIClient:
                 prompt_id,
                 exc,
             )
+            if on_progress:
+                on_progress({"type": "ws_dropped_fallback_polling", "prompt_id": prompt_id, "detail": str(exc)})
             return await self._poll_history_until_done(prompt_id, history_poll_interval_seconds)
 
     async def _poll_history_until_done(self, prompt_id: str, poll_interval_seconds: float) -> dict[str, Any]:

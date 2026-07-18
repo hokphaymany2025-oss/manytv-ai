@@ -211,6 +211,92 @@ def test_asyncio_cancelled_error_still_propagates(tmp_path):
     asyncio.run(scenario())
 
 
+def test_successful_job_writes_started_and_completed_log_entries(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    async def handler(job: Job) -> dict:
+        return {"ok": True}
+
+    worker.register_handler("test", handler)
+
+    async def scenario():
+        job = await worker.submit("test", {})
+        await _run_one_iteration(worker)
+        return job.id
+
+    job_id = asyncio.run(scenario())
+    logs = asyncio.run(store.get_job_logs(job_id))
+
+    assert [entry["stage"] for entry in logs] == ["job", "job"]
+    assert "Starting job" in logs[0]["message"]
+    assert "completed" in logs[1]["message"]
+
+
+def test_failed_job_writes_error_level_log_entry(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    async def handler(job: Job) -> dict:
+        raise ValueError("boom")
+
+    worker.register_handler("test", handler)
+
+    async def scenario():
+        job = await worker.submit("test", {})
+        await _run_one_iteration(worker)
+        return job.id
+
+    job_id = asyncio.run(scenario())
+    logs = asyncio.run(store.get_job_logs(job_id))
+
+    failure_entries = [e for e in logs if e["level"] == "error"]
+    assert len(failure_entries) == 1
+    assert "boom" in failure_entries[0]["message"]
+
+
+def test_job_cancelled_exception_writes_info_level_log_entry(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    async def handler(job: Job) -> dict:
+        raise JobCancelled("cancelled mid-flight")
+
+    worker.register_handler("test", handler)
+
+    async def scenario():
+        job = await worker.submit("test", {})
+        await _run_one_iteration(worker)
+        return job.id
+
+    job_id = asyncio.run(scenario())
+    logs = asyncio.run(store.get_job_logs(job_id))
+
+    assert any("cancelled" in e["message"].lower() and e["level"] == "info" for e in logs)
+
+
+def test_dequeue_skips_job_already_cancelled_writes_log_entry(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    async def handler(job: Job) -> dict:
+        return {}
+
+    worker.register_handler("test", handler)
+
+    async def scenario():
+        job = await worker.submit("test", {})
+        await store.update_job_status(job.id, JobStatus.CANCELLED.value)
+        await _run_one_iteration(worker)
+        return job.id
+
+    job_id = asyncio.run(scenario())
+    logs = asyncio.run(store.get_job_logs(job_id))
+
+    assert len(logs) == 1
+    assert "skipping" in logs[0]["message"]
+
+
 def test_cancelled_job_still_releases_gpu_memory_and_task_done(tmp_path, monkeypatch):
     store = _store(tmp_path)
     worker = SingleSlotWorker(store=store)

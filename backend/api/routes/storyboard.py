@@ -30,8 +30,9 @@ from fastapi.responses import FileResponse
 from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
 from backend.core.config import Settings, get_settings
 from backend.core.job_store import JobStore, get_job_store
-from backend.core.worker import Job, JobCancelled, JobStatus, ShotStatus, worker
+from backend.core.worker import Job, JobCancelled, JobStatus, LogLevel, LogStage, ShotStatus, worker
 from backend.models.schemas import (
+    JobLogEntry,
     JobStatusResponse,
     ShotStatusResponse,
     StoryboardRequest,
@@ -162,6 +163,12 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
                     "Job %s shot %d: found existing ComfyUI history for prompt %s, reusing it "
                     "instead of resubmitting.", job.id, shot_index, prompt_id,
                 )
+                await store.add_job_log(
+                    job.id, LogLevel.INFO.value, LogStage.RESUME.value,
+                    f"Job {job.id} shot {shot_index}: found existing ComfyUI history for prompt "
+                    f"{prompt_id}, reusing it instead of resubmitting.",
+                    shot_index=shot_index,
+                )
             except ComfyUIError:
                 # ComfyUI has no memory of this prompt (it was likely
                 # restarted independently of the backend) -- safe to
@@ -174,6 +181,12 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
                     "Job %s shot %d: prompt %s has no ComfyUI history; resubmitting.",
                     job.id, shot_index, shot_row["prompt_id"],
                 )
+                await store.add_job_log(
+                    job.id, LogLevel.INFO.value, LogStage.RESUME.value,
+                    f"Job {job.id} shot {shot_index}: prompt {shot_row['prompt_id']} has no ComfyUI "
+                    "history; resubmitting.",
+                    shot_index=shot_index,
+                )
 
         if history is None:
             workflow = _apply_shot_to_workflow(workflow_template, shot)
@@ -183,12 +196,31 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
                 prompt_id=prompt_id, submitted_at=time.time(),
             )
             logger.info("Job %s: shot %d queued as ComfyUI prompt %s", job.id, shot_index, prompt_id)
+            await store.add_job_log(
+                job.id, LogLevel.INFO.value, LogStage.SHOT.value,
+                f"Job {job.id}: shot {shot_index} queued as ComfyUI prompt {prompt_id}",
+                shot_index=shot_index,
+            )
+
+            # comfyui_client.py stays job-agnostic (it only ever sees a bare
+            # prompt_id, never a job_id/shot_index or JobStore) -- so its
+            # WS-drop-falls-back-to-polling warning can't persist itself.
+            # on_progress relays it here as a synthetic message; _progress
+            # stays synchronous (matching on_progress's existing contract,
+            # unchanged) and only *captures* it plus the moment it actually
+            # happened, deferring the actual async add_job_log call to the
+            # finally block below, after wait_for_completion resolves.
+            pending_log_events: list[tuple[str, str, str, float]] = []
 
             def _progress(message: dict[str, Any], shot_index: int = shot_index) -> None:
                 if message.get("type") == "progress":
                     data = message["data"]
                     logger.info(
                         "Job %s shot %d: step %s/%s", job.id, shot_index, data.get("value"), data.get("max")
+                    )
+                elif message.get("type") == "ws_dropped_fallback_polling":
+                    pending_log_events.append(
+                        (LogLevel.WARNING.value, LogStage.COMFYUI.value, message["detail"], time.time())
                     )
 
             try:
@@ -202,15 +234,31 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
                     f"{settings.generation_timeout_seconds}s."
                 )
                 await store.upsert_shot(job.id, shot_index, ShotStatus.FAILED.value, error=error_msg, finished_at=time.time())
+                await store.add_job_log(
+                    job.id, LogLevel.ERROR.value, LogStage.SHOT.value, error_msg, shot_index=shot_index,
+                )
                 raise ComfyUIError(error_msg) from exc
             except Exception as exc:
                 await store.upsert_shot(job.id, shot_index, ShotStatus.FAILED.value, error=str(exc), finished_at=time.time())
+                await store.add_job_log(
+                    job.id, LogLevel.ERROR.value, LogStage.SHOT.value, str(exc), shot_index=shot_index,
+                )
                 raise
+            finally:
+                for level, stage, message, event_timestamp in pending_log_events:
+                    await store.add_job_log(
+                        job.id, level, stage, message, shot_index=shot_index, timestamp=event_timestamp,
+                    )
 
         shot_dir = settings.output_path / job.id / f"shot_{shot_index:03d}"
         saved_files = await _save_history_outputs(comfyui_client, history, shot_dir)
         await store.upsert_shot(job.id, shot_index, ShotStatus.DONE.value, files=saved_files, finished_at=time.time())
         logger.info("Job %s shot %d done: %d file(s) saved to %s", job.id, shot_index, len(saved_files), shot_dir)
+        await store.add_job_log(
+            job.id, LogLevel.INFO.value, LogStage.SHOT.value,
+            f"Job {job.id} shot {shot_index} done: {len(saved_files)} file(s) saved to {shot_dir}",
+            shot_index=shot_index,
+        )
         results.append({"shot_index": shot_index, "prompt_id": prompt_id, "files": saved_files})
 
     return {"shots": results}
@@ -310,6 +358,26 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
     return await _build_job_status_response(get_job_store(), job_id)
 
 
+@router.get("/jobs/{job_id}/logs", response_model=list[JobLogEntry])
+async def get_job_logs(job_id: str) -> list[JobLogEntry]:
+    """Curated execution-log lines for a job -- a separate endpoint (not a
+    field on JobStatusResponse) since GET /api/jobs (the dashboard list)
+    reuses _build_job_status_response for every job in view and has no use
+    for full log history on every 3s poll; only the detail page needs this.
+    """
+    store = get_job_store()
+    if await store.get_job(job_id) is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    rows = await store.get_job_logs(job_id)
+    return [
+        JobLogEntry(
+            timestamp=r["timestamp"], level=r["level"], stage=r["stage"],
+            message=r["message"], shot_index=r["shot_index"],
+        )
+        for r in rows
+    ]
+
+
 @router.get("/jobs", response_model=list[JobStatusResponse])
 async def list_jobs_route(status: Optional[str] = None) -> list[JobStatusResponse]:
     """Lists jobs, newest first. `status` is an optional comma-separated
@@ -367,6 +435,7 @@ async def retry_job(job_id: str) -> JobStatusResponse:
     )
     await worker.resubmit(job)
     logger.info("Job %s retried.", job_id)
+    await store.add_job_log(job_id, LogLevel.INFO.value, LogStage.JOB.value, f"Job {job_id} retried.")
     return await _build_job_status_response(store, job_id)
 
 
@@ -396,6 +465,9 @@ async def cancel_job(job_id: str) -> JobStatusResponse:
         raise HTTPException(status_code=409, detail=f"Job is '{status}'; nothing to cancel.")
 
     logger.info("Job %s cancel requested (was %s).", job_id, status)
+    await store.add_job_log(
+        job_id, LogLevel.INFO.value, LogStage.JOB.value, f"Job {job_id} cancel requested (was {status})."
+    )
     return await _build_job_status_response(store, job_id)
 
 

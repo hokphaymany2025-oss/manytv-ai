@@ -1,4 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
+import { JobExecutionLogs } from '../components/JobExecutionLogs'
 import { JobRow } from '../components/JobRow'
 import { JobTimeline } from '../components/JobTimeline'
 import { useJob } from '../useJob'
@@ -23,6 +24,8 @@ export function JobDetailPage() {
           </ul>
           <h2>Timeline</h2>
           <JobTimeline job={job} />
+          <h2>Execution Logs</h2>
+          <JobExecutionLogs jobId={job.id} />
         </>
       )}
     </div>

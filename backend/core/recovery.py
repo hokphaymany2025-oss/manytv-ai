@@ -23,7 +23,7 @@ import time
 
 from backend.core.comfyui_client import ComfyUIClient
 from backend.core.job_store import JobStore
-from backend.core.worker import Job, JobStatus, SingleSlotWorker
+from backend.core.worker import Job, JobStatus, LogLevel, LogStage, SingleSlotWorker
 
 logger = logging.getLogger("manytv.recovery")
 
@@ -48,6 +48,10 @@ async def resume_incomplete_jobs(worker: SingleSlotWorker, store: JobStore, comf
     for row in cancelling_rows:
         await store.update_job_status(row["id"], JobStatus.CANCELLED.value, finished_at=time.time())
         logger.info("Job %s was CANCELLING when the backend last stopped; finalized as CANCELLED.", row["id"])
+        await store.add_job_log(
+            row["id"], LogLevel.INFO.value, LogStage.RESUME.value,
+            f"Job {row['id']} was CANCELLING when the backend last stopped; finalized as CANCELLED.",
+        )
 
     live_rows = [r for r in rows if r["status"] != JobStatus.CANCELLING.value]
     if not live_rows:
@@ -86,9 +90,20 @@ async def _resume_comfyui_jobs(
             "(checking every %.0fs; start it with scripts/run_comfyui.ps1).",
             len(rows), poll_interval_seconds,
         )
+        for row in rows:
+            await store.add_job_log(
+                row["id"], LogLevel.WARNING.value, LogStage.RESUME.value,
+                f"ComfyUI not reachable yet -- job {row['id']} will wait for it before resuming "
+                f"(checking every {poll_interval_seconds:.0f}s).",
+            )
         while not await comfyui_client.health_check():
             await asyncio.sleep(poll_interval_seconds)
         logger.info("ComfyUI is reachable again; resuming %d storyboard job(s).", len(rows))
+        for row in rows:
+            await store.add_job_log(
+                row["id"], LogLevel.INFO.value, LogStage.RESUME.value,
+                f"ComfyUI is reachable again; resuming job {row['id']}.",
+            )
 
     for stale_row in rows:
         # `rows` was captured before the (possibly long, possibly
@@ -102,6 +117,10 @@ async def _resume_comfyui_jobs(
             if fresh_row["status"] == JobStatus.CANCELLING.value:
                 await store.update_job_status(fresh_row["id"], JobStatus.CANCELLED.value, finished_at=time.time())
             logger.info("Job %s was cancelled while waiting for ComfyUI; not resuming.", fresh_row["id"])
+            await store.add_job_log(
+                fresh_row["id"], LogLevel.INFO.value, LogStage.RESUME.value,
+                f"Job {fresh_row['id']} was cancelled while waiting for ComfyUI; not resuming.",
+            )
             continue
         await _resubmit_row(worker, store, fresh_row)
 
@@ -120,4 +139,8 @@ async def _resubmit_row(worker: SingleSlotWorker, store: JobStore, row: dict) ->
         job.status = JobStatus.RESUMING
         await store.update_job_status(job.id, JobStatus.RESUMING.value)
         logger.info("Job %s (%s) was mid-flight when the backend last stopped; marked RESUMING.", job.id, job.kind)
+        await store.add_job_log(
+            job.id, LogLevel.INFO.value, LogStage.RESUME.value,
+            f"Job {job.id} ({job.kind}) was mid-flight when the backend last stopped; marked RESUMING.",
+        )
     await worker.resubmit(job)

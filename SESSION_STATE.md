@@ -1,10 +1,34 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (Job Execution Logs session). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (later) — Job Execution Logs added; repo pushed to a real GitHub remote
+
+**What was completed:** Two separate threads this session. First, at the user's request, this repo was finally given a real remote: tagged `v0.8-job-timeline`, added `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`, pushed `master` and both tags. Hit one snag — the GitHub repo had auto-initialized with a `main` branch (README-only commit) as its default, so `master` and `main` briefly diverged; per the user's explicit instruction, `master` was kept (not renamed to `main`) and `main` was deleted from the remote after GitHub's "refusing to delete the current branch" error was resolved by changing the repo's default branch first. Whether `.github/workflows/ci.yml` has actually fired for real on this now-remoted repo hasn't been directly confirmed (no `gh` CLI or web access available in-session) — named explicitly in `TODO.md` rather than assumed either way.
+
+Second, the actual feature: **Job Execution Logs**, requested via a staged planning flow — a "continue analysis only, do not edit files" text-only pass first (job-lifecycle event inventory, SQLite-vs-filesystem, smallest API shape, frontend file list, migration risk), approved with specific amendments (add a `stage` field; curated events only, no high-frequency ticks; logs persist across retries), then a full Plan-mode pass including a dedicated Plan-agent design review before any code. Confirmed HEAD (`f794809`), clean tree, 80/27 passing tests before starting.
+
+- **Backend:** new `job_logs` table in `job_store.py` (`id, job_id, timestamp, level, stage, message, shot_index`, surrogate autoincrement `id` as the real sort key rather than raw `timestamp`, since every write is already serialized through the existing lock) plus `add_job_log`/`get_job_logs`. New `LogLevel`/`LogStage` enums in `worker.py`. Explicit `add_job_log` calls added next to ~12 existing `logger.*` call sites across `worker.py`, `storyboard.py`, `recovery.py`, `generate_script.py` — chosen over a `logging.Handler`-based design specifically because `Handler.emit()` is sync while every `JobStore` write is `async def` (a Plan-agent design pass, run in parallel with a text-only analysis pass, independently converged on the same rejection). Two brand-new call sites added too: the shot-failure `except` blocks in `_run_storyboard_job` had no `logger` call at all before this. The one real design wrinkle — `comfyui_client.py`'s WS-drop-fallback warning — was relayed through the existing synchronous `on_progress` callback (no signature change to that already-shipped, BUG-1-live-validated method) via a capture-then-drain-in-a-`finally`-block pattern in `storyboard.py`, deliberately avoiding a naive design that would have stamped the persisted event's timestamp at drain time instead of when it actually happened. New `GET /api/jobs/{job_id}/logs` route, separate from `JobStatusResponse` (so the dashboard's `GET /api/jobs` list view doesn't carry full log history on every 3s poll). 14 new/extended tests — `python -m pytest tests/ -v` → **94 passed**.
+- **Frontend:** new `useJobLogs.ts` (matching `useJob`/`useJobList`'s poll shape) and `JobExecutionLogs.tsx`, rendered on `JobDetailPage.tsx` below `<JobTimeline>`. First component-rendering test in this project (`JobExecutionLogs.test.tsx`) — surfaced that `@testing-library/jest-dom` was never installed, so its assertions use plain `className`/`textContent` checks rather than adding a new dependency for `toHaveClass`/`toBeInTheDocument`. `npm run test` → **34 passed** (27 + 7 new). `npm run build` clean.
+
+**Live validation:** real backend + real Vite dev server, Playwright. A `generate_script` job showed "Starting job" while queued, then the generated-script and completed lines once done. A `storyboard` job (ComfyUI intentionally not running) showed the job-level failure entry with error-level red styling; retried it, let it fail again, and confirmed the one check genuinely unique to this feature vs. Job Timeline — **the log kept both attempts' entries together** (start → fail → retried → start → fail again, 5 total), never cleared. Zero console errors. Shot-level queued/done lines, the resume-reconciliation lines, and the WS-drop relay itself weren't exercised live (ComfyUI wasn't running, so no shot was ever submitted) — covered by the backend unit tests instead, same documented gap as every prior ComfyUI-dependent session.
+
+**Files changed:** `backend/core/job_store.py`, `backend/core/worker.py`, `backend/api/routes/storyboard.py`, `backend/core/comfyui_client.py`, `backend/core/recovery.py`, `backend/api/routes/generate_script.py`, `backend/models/schemas.py`, `tests/test_job_store.py`, `tests/test_job_routes.py`, `tests/test_worker.py`, `tests/test_recovery.py`, `tests/test_comfyui_client.py`, `frontend/src/types.ts`, `frontend/src/api.ts`, `frontend/src/api.test.ts`, `frontend/src/useJobLogs.ts` (new), `frontend/src/useJobLogs.test.tsx` (new), `frontend/src/components/JobExecutionLogs.tsx` (new), `frontend/src/components/JobExecutionLogs.test.tsx` (new), `frontend/src/pages/JobDetailPage.tsx`, `frontend/src/App.css`, `TODO.md`, `SESSION_STATE.md`.
+
+**Remaining problems / blockers:** None blocking.
+- Whether GitHub Actions has actually run `.github/workflows/ci.yml` for real still isn't directly confirmed (no `gh`/web access this session).
+- No retention/pruning for `job_logs` (new, low priority — same gap `jobs`/`shots` already have, `job_logs` just grows faster per job).
+- `storyboard.py`'s pure functions still have no dedicated direct tests; BUG-5 (cosmetic) and a dependency lockfile still open — all low priority, unchanged.
+- No live services running — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end; confirmed via `Get-NetTCPConnection`.
+- **This session's changes are not yet committed.**
+
+**Exact next task:** Commit this session's Job Execution Logs changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired on the now-remoted repo.
+
+---
 
 ### 2026-07-18 ~06:10 — Job Timeline added (backend timestamps exposed + frontend display)
 
@@ -404,20 +428,20 @@ These weren't answerable from the repository alone:
 
 ## Recommended entry point for next session
 
-BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, and a Job Timeline are all done and live-validated (see the `2026-07-18 ~06:10` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
-- See `git log --oneline -5` for the actual current HEAD — this session committed the Job Timeline feature immediately after writing its Session Log entry above.
+BUG-1 through BUG-6 are all closed; job persistence + resume, CORS/auth hardening, CI, job retry/cancellation, a first frontend, a list-jobs endpoint, the frontend using that endpoint, a status-filter UI, a Job Detail page, a Job Timeline, and Job Execution Logs are all done and live-validated (see the `2026-07-18 (later)` Session Log entry above for full detail — that entry, plus the ones below it, supersede the "Repo state"/"Open questions" sections further down, which are historical snapshots and no longer current). Current state in brief:
+- **This repo now has a real GitHub remote**: `origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`, `master` pushed along with `v0.7-job-dashboard`/`v0.8-job-timeline` tags. Whether `.github/workflows/ci.yml` has actually fired on a real runner isn't directly confirmed yet (no `gh`/web access this session) — worth a quick check next time there's a reason to be in the GitHub UI.
+- See `git log --oneline -5` / `git status` for the actual current HEAD and working-tree state rather than trusting this file — **this session's Job Execution Logs changes were not yet committed** as of this entry.
 - `output/jobs.db` (SQLite, gitignored) holds real persisted job history spanning many sessions' live tests.
 - **No live services running** — backend (:8000) and Vite dev server (:5173) both stopped cleanly at the end of the last session; confirmed via `Get-NetTCPConnection`.
-- **This repo has no git remote.** CI (`.github/workflows/ci.yml`) still has never been observed running on a real GitHub Actions job — still dry-run-validated locally only. The only backlog item with any real weight.
-- Backend: 80 tests passing (`python -m pytest tests/ -v`). Frontend: 27 tests passing (`cd frontend && npm run test`).
+- Backend: 94 tests passing (`python -m pytest tests/ -v`). Frontend: 34 tests passing (`cd frontend && npm run test`).
 
-**Exact next task:** Push this repo to a GitHub remote and confirm `.github/workflows/ci.yml` actually fires — the last standing "never observed running for real" item, and the only thing left on the main backlog with real weight.
+**Exact next task:** Commit this session's Job Execution Logs changes (not yet done). Independently: confirm the GitHub Actions workflow has actually fired for real on the now-remoted repo.
 
 **Commands to resume:**
 ```powershell
 cd D:\NewProjects\ManyTV
 git log --oneline -5              # confirm what's actually committed
 git status                        # confirm working tree state
-python -m pytest tests/ -v        # confirm still 80 passed
-cd frontend && npm run test       # confirm still 27 passed
+python -m pytest tests/ -v        # confirm still 94 passed
+cd frontend && npm run test       # confirm still 34 passed
 ```

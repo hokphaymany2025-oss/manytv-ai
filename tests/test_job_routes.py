@@ -288,6 +288,56 @@ def test_get_job_status_includes_shot_level_timestamps(tmp_path, monkeypatch):
     assert shot.finished_at == 3.0
 
 
+# ---- logs ----
+
+
+def test_get_job_logs_rejects_missing_job(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(storyboard_module.get_job_logs("does-not-exist"))
+
+    assert exc_info.value.status_code == 404
+
+
+def test_get_job_logs_returns_empty_list_for_job_with_no_logs_yet(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "queued", {"prompt": "x"}, created_at=1.0)
+        return await storyboard_module.get_job_logs("job-1")
+
+    assert asyncio.run(scenario()) == []
+
+
+def test_get_job_logs_returns_entries_in_order_with_correct_shape(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "running", {"shots": []}, created_at=1.0)
+        await store.add_job_log("job-1", "info", "job", "Starting job job-1.", timestamp=10.0)
+        await store.add_job_log(
+            "job-1", "info", "shot", "Job job-1: shot 0 queued as ComfyUI prompt p1",
+            shot_index=0, timestamp=11.0,
+        )
+        return await storyboard_module.get_job_logs("job-1")
+
+    entries = asyncio.run(scenario())
+
+    assert [e.message for e in entries] == [
+        "Starting job job-1.",
+        "Job job-1: shot 0 queued as ComfyUI prompt p1",
+    ]
+    assert entries[0].shot_index is None
+    assert entries[1].shot_index == 0
+    assert entries[1].level == "info"
+    assert entries[1].stage == "shot"
+    assert entries[1].timestamp == 11.0
+
+
 # ---- list_jobs_route ----
 
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getJob, listJobs } from './api'
+import { ApiError, getJob, getJobLogs, listJobs } from './api'
 import type { JobStatusResponse } from './types'
 
 const sampleJob: JobStatusResponse = {
@@ -80,5 +80,29 @@ describe('getJob', () => {
 
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(404)
+  })
+})
+
+describe('getJobLogs', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('calls GET /api/jobs/:id/logs', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { timestamp: 1.0, level: 'info', stage: 'job', message: 'Starting job job-1.', shot_index: null },
+      ],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await getJobLogs('job-1')
+
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toBe('http://127.0.0.1:8000/api/jobs/job-1/logs')
+    expect(result).toEqual([
+      { timestamp: 1.0, level: 'info', stage: 'job', message: 'Starting job job-1.', shot_index: null },
+    ])
   })
 })

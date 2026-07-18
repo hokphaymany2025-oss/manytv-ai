@@ -17,8 +17,9 @@ from typing import Any
 from fastapi import APIRouter
 
 from backend.core.config import get_settings
+from backend.core.job_store import get_job_store
 from backend.core.llm_client import LLMClient
-from backend.core.worker import Job, worker
+from backend.core.worker import Job, LogLevel, LogStage, worker
 from backend.models.schemas import ScriptGenerationRequest, ScriptGenerationResponse
 
 logger = logging.getLogger("manytv.api.script")
@@ -33,6 +34,10 @@ async def _run_generate_script_job(job: Job) -> dict[str, Any]:
         payload["prompt"], payload["target_duration_seconds"], payload["tone"]
     )
     logger.info("Job %s: generated script (%d chars).", job.id, len(text))
+    await get_job_store().add_job_log(
+        job.id, LogLevel.INFO.value, LogStage.JOB.value,
+        f"Job {job.id}: generated script ({len(text)} chars).",
+    )
     return {"script": text}
 
 
