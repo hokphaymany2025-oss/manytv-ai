@@ -1,4 +1,5 @@
 import type {
+  JobAttemptEntry,
   JobLogEntry,
   JobStatusResponse,
   ScriptGenerationRequest,
@@ -61,6 +62,10 @@ export function cancelJob(jobId: string): Promise<JobStatusResponse> {
 
 export function getJobLogs(jobId: string): Promise<JobLogEntry[]> {
   return request(`/api/jobs/${jobId}/logs`)
+}
+
+export function getJobAttempts(jobId: string): Promise<JobAttemptEntry[]> {
+  return request(`/api/jobs/${jobId}/attempts`)
 }
 
 // ArtifactResponse.filename is already a clean basename (backend/api/routes/

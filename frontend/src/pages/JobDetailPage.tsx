@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { JobArtifacts } from '../components/JobArtifacts'
+import { JobAttemptHistory } from '../components/JobAttemptHistory'
 import { JobExecutionLogs } from '../components/JobExecutionLogs'
 import { JobRow } from '../components/JobRow'
 import { JobTimeline } from '../components/JobTimeline'
@@ -27,6 +28,8 @@ export function JobDetailPage() {
           <JobTimeline job={job} />
           <h2>Execution Logs</h2>
           <JobExecutionLogs jobId={job.id} />
+          <h2>Attempt History</h2>
+          <JobAttemptHistory jobId={job.id} />
           <h2>Artifacts</h2>
           <JobArtifacts job={job} />
         </>

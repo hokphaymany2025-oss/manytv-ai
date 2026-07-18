@@ -275,6 +275,59 @@
   flex: 1 1 auto;
 }
 
+.job-attempts {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.job-attempts__entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.job-attempts__entry--failed {
+  background: rgba(220, 60, 60, 0.15);
+}
+
+.job-attempts__entry--cancelled {
+  background: rgba(200, 150, 30, 0.15);
+}
+
+.job-attempts__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.job-attempts__number {
+  font-weight: 600;
+}
+
+.job-attempts__status {
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.job-attempts__time {
+  color: var(--text);
+}
+
+.job-attempts__error {
+  color: #d33;
+  margin: 0;
+}
+
 .job-artifacts {
   list-style: none;
   margin: 8px 0 0;

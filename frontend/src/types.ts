@@ -63,3 +63,11 @@ export interface JobLogEntry {
   message: string
   shot_index: number | null
 }
+
+export interface JobAttemptEntry {
+  status: string
+  error: string | null
+  started_at: number | null
+  finished_at: number | null
+  recorded_at: number
+}
