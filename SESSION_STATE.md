@@ -6,6 +6,49 @@
 
 ## Session Log
 
+### 2026-07-19 (checkpoint, 2) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint` again, continuing directly from the "Phase 3, closing" session immediately below (frontend coverage measurement). No application logic touched.
+
+- **Branch:** `feature/v1.2-development`, 1 commit ahead of `origin/feature/v1.2-development` (`f37112f`, still unpushed).
+- **Working tree:** matches exactly what the prior session left uncommitted — `.gitignore`, `SESSION_STATE.md`, `TODO.md`, `frontend/package-lock.json`, `frontend/package.json`, `frontend/vite.config.ts` (the `@vitest/coverage-v8` addition), plus the untracked `.claude/` directory (local tooling config, not part of this work, left alone as in every prior checkpoint). Nothing unexpected found.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed** — matches the prior session's reported count exactly.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`), unrelated to any uncommitted change.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Remaining problems / blockers:** None new. Same as the prior entry:
+- This session's (and the prior session's) changes are not yet committed — waiting on approval to commit the frontend coverage-tooling addition.
+- `f37112f` (backend coverage work) remains unpushed to `origin`.
+
+**Exact next task:** Same as before — get approval to commit the pending frontend coverage-tooling diff (`.gitignore`, `frontend/package.json`, `frontend/package-lock.json`, `frontend/vite.config.ts`, `TODO.md`, `SESSION_STATE.md`) on `feature/v1.2-development`, then push both commits and confirm CI passes.
+
+---
+
+### 2026-07-19 (Phase 3, closing) — Frontend coverage measurement added, v1.2 Phase 3 fully closed
+
+**What was completed:** Continued from the checkpoint/commit sessions below. Task, identified via `/next_tasks` and approved by name via `/implement`: add frontend test coverage measurement (`vitest --coverage`), the last explicitly-named open item in v1.2's Phase 3, mirroring the backend `pytest-cov` session's own scope and precedent exactly (tooling only, report first, don't chase the number in the same pass).
+
+- Added `@vitest/coverage-v8` as a devDependency (`^4.1.10`, version-matched to the already-installed `vitest`). `frontend/vite.config.ts`'s existing `test` block gained a `coverage` section (`provider: 'v8'`, `reporter: ['text', 'html']`, `include: ['src/**/*.{ts,tsx}']`, excluding test files/`main.tsx`/`vite-env.d.ts`). `.gitignore` gained `frontend/coverage/`. **Deliberately not wired into `package.json`'s default `"test"` script** — same reasoning as the backend: `npm run test`/CI's frontend job stay exactly as fast as before; coverage is opt-in via `npm run test -- --coverage`.
+- **Result: 66.94% overall** (242 statements, 162 covered), 58 tests still passing. A real debugging moment worth recording: the terminal `text` reporter initially appeared to be missing several files entirely (`formatTime.ts`, `formatBytes.ts`, `useJobAttempts.ts`, `useJobLogs.ts`, `JobAttemptHistory.tsx`, `JobExecutionLogs.tsx`) — cross-checked against the generated HTML report (`grep`-ing each file's `.html` page directly, no Python available in this environment) rather than assuming a config bug, and confirmed all six are genuinely **100% covered**; istanbul's text reporter just hides fully-covered files from its table by default. The real, now-quantified picture: `useJob.ts`/`useJobList.ts` 96%+, `api.ts` 77%, `JobArtifacts.tsx` 90%, `JobTimeline.tsx` 74% (only its pure `buildTimelineEvents` helper is tested, not the render path) — and **zero test coverage at all** on `App.tsx`, `JobList.tsx`, `ScriptForm.tsx`, `StoryboardForm.tsx`, `StatusFilter.tsx`, `DashboardPage.tsx`, `JobDetailPage.tsx`, plus `JobRow.tsx` at only 30% (its one test file covers just the `project_id` badge). Consistent with this project's long-standing, deliberate testing convention (pure logic + a few data-bearing components tested directly, page shells/forms never rendered in a test) rather than a newly-introduced gap — this is simply the first time it's been measured rather than just generally known, exactly paralleling the backend coverage session's own framing.
+- **Deliberately out of scope**, named rather than chased: raising any of the above numbers. The approved task was "add coverage measurement," not "raise coverage to X%."
+
+**Verification:** `python -m pytest tests/ -v` → **164 passed** (backend, unaffected, re-confirmed). `npm run test` (plain) → **58 passed**. `npm run build` → clean. `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`) already named in every recent entry.
+
+**Files changed:** `frontend/package.json`/`package-lock.json` (new devDependency), `frontend/vite.config.ts`, `.gitignore`, `TODO.md`, `SESSION_STATE.md`. No application source touched, confirmed by review before finishing.
+
+**Remaining problems / blockers:** None blocking. **v1.2 Phase 3 is now fully closed** — both backend and frontend coverage measurement done.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention.
+- The two remaining named-but-optional items are unchanged from before: refreshing README's stale architecture tree, and wiring either coverage report into CI (neither was in scope for this pass).
+- The prior session's backend coverage commit (`f37112f`) is still unpushed to `origin` — noted, not blocking.
+- Phase 4 not started, gated on revisiting BUG-3's localhost-only scope decision.
+
+**Exact next task:** Get approval to commit this session's frontend coverage-tooling changes (`frontend/package.json`, `frontend/package-lock.json`, `frontend/vite.config.ts`, `.gitignore`, `TODO.md`, `SESSION_STATE.md`) on `feature/v1.2-development`. Once approved: push `f37112f` (and this new commit) to `origin` and confirm CI passes — the last item with any real remaining weight before v1.2 can be considered fully wrapped up, aside from the two optional/deferred items and the explicitly-gated Phase 4.
+
+---
+
 ### 2026-07-19 (checkpoint) — State verification only, no code changes
 
 **What was completed:** Ran `/checkpoint` to verify and record current session state. No application logic touched, per the checkpoint task's explicit constraint.

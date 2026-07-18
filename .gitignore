@@ -7,4 +7,5 @@ output/*
 .pytest_cache/
 .coverage
 htmlcov/
+frontend/coverage/
 .claude/settings.local.json
