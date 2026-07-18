@@ -1,10 +1,41 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-18 (CI fix session — root cause found, fixed, committed, and confirmed green on a real GitHub Actions run for the first time in this repository's history). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-18 (v1.2 planning session — full architecture/feature/gap analysis, no application code touched, working tree still has the analysis staged for commit). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-18 (v1.2 kickoff) — Architecture/feature/gap analysis for v1.2, no code changed
+
+**What was completed:** Picked up from the CI-fix session's "Exact next task" (create `v1.1.1-ci-fix`, then start v1.2). Found the release tag already existed (`v1.1.1-ci-fix` on `b1c9981`) and a `feature/v1.2-development` branch already checked out, one commit ahead of `master` (`b657f5b`, "Fix pytest import path for local development" — adds `pytest.ini` with `pythonpath = .`, closing the "bare `pytest` still needs `-m`" residual gap named in the CI-fix entry). `TODO.md` already had a full, detailed "v1.2 Planning" section written (architecture review, current limitations, a 4-phase roadmap, 5 prioritized recommended next features) — but it existed only as an **uncommitted working-tree change** (`git diff` showed it as the entire delta on `TODO.md`), with no corresponding `SESSION_STATE.md` entry. This looked like a prior session's analysis pass that was cut off before its bookkeeping step (commit + session-state update), likely lost to a context compaction — so this session's job was to verify that existing analysis is still accurate rather than write a new one from scratch, then close the loop.
+
+**Verification performed (all claims in `TODO.md`'s "v1.2 Planning" section checked against the live repo, not taken on faith):**
+- Backend per-file line counts: `wc -l` on all 12 listed backend files matches exactly (`app.py` 78, `config.py` 80, `comfyui_client.py` 153, `llm_client.py` 82, `worker.py` 226, `job_store.py` 344, `events.py` 68, `recovery.py` 146, `gpu_memory.py` 33, `generate_script.py` 58, **`storyboard.py` 653** — confirmed as the largest file by a wide margin, `schemas.py` 102) — total 2023 lines, matching the claimed "~2000."
+- Frontend: `frontend/src/**/*.{ts,tsx}` excluding tests totals 868 lines, matching the claimed "~870."
+- Tests: `python -m pytest tests/ -v` → **128 passed** (backend); `cd frontend && npm run test` → **53 passed, 9 files** (frontend) — both exactly as claimed, both still 100% green on this branch.
+- `.github/workflows/ci.yml` confirmed to run only `pip install -r requirements.txt` + `python -m pytest tests/ -v` — no `npm` step at all, confirming the "CI never runs the frontend" gap is real, not stale.
+- `frontend/package.json` confirmed `test`/`build`/`lint` (`oxlint`) scripts all exist and are independently runnable, matching the claim that a frontend CI job would be a small addition, not new tooling.
+- `output/` confirmed at 13MB across 7 real job directories, matching the retention-gap sizing claim.
+- No stale claims found — every checked number in the analysis held exactly. **No changes made to `TODO.md`'s existing v1.2 Planning content** since it was already accurate; this session's contribution is the verification itself plus this session-state entry.
+
+**Summary of the analysis now sitting in `TODO.md` (for a reader who wants it without opening that file):**
+1. **Architecture** — FastAPI backend (~2000 lines) orchestrating separately-running ComfyUI + Ollama over one shared 8GB-GPU worker slot; SQLite persistence with an SSE event bus layered on top; React+Vite+TS frontend (~870 lines) with zero polling left, three `EventSource`-backed hooks. `storyboard.py` (653 lines) is the one file doing routes + business logic + SSE + artifact-metadata all at once.
+2. **Existing features** — essentially everything through the "Job Output Artifacts"/SSE milestones: script generation, storyboard generation, job persistence + crash resume, retry/cancel, list/filter/detail-page/timeline/execution-logs/artifact-preview UI, all backend-tested (128 cases) and frontend-tested (53 cases), CI-gated (backend only).
+3. **Missing capabilities (newly identified this analysis, beyond what was already tracked)** — CI doesn't run the frontend suite at all; `project_id` is captured and persisted but never surfaced in the UI (write-only field); no code coverage measurement on either side; README's architecture tree is stale (predates `job_store.py`/`recovery.py`/`events.py`/`llm_client.py`/`frontend/`/`tests/`/`pytest.ini`); two UX-visible cancellation gaps (`generate_script` can't be cancelled mid-run; ComfyUI cancellation is cooperative-only, never `/interrupt`-based).
+4. **Roadmap** — 4 phases: (1) frontend CI job + backend dependency lockfile + optional README refresh — small, low-risk, directly motivated by the CI-fix session's own incident; (2) surface `project_id` in the dashboard + build real retry/cancel attempt history; (3) split `storyboard.py` along its four responsibilities + add coverage measurement; (4) deeper capability work (`/interrupt`, mid-run script-gen cancellation, real retention policy, any multi-user/remote-access question) explicitly gated on the user revisiting BUG-3's localhost-only scope decision — not recommended to start without that. Recommended starting point: Phase 1 item 1 (frontend CI job), smallest and most directly evidence-based.
+
+**Files changed:** `SESSION_STATE.md` only (this entry). `TODO.md`'s v1.2 Planning section was already present in the working tree from before this session and is unchanged by it — still uncommitted.
+
+**Remaining problems / blockers:** None blocking.
+- **`TODO.md`'s v1.2 Planning section and this `SESSION_STATE.md` entry are both still uncommitted** — same working-tree state as found at the start of this session, now verified accurate. Per this project's standing convention (seen throughout the Session Log), commits wait for explicit user approval rather than happening automatically.
+- No v1.2 feature work has started yet — this was an analysis-only pass, per explicit instruction not to modify application code.
+- All previously-tracked bugs/gaps (BUG-5 cosmetic, no lockfile, no log/job retention, un-cached artifact `stat()`, the SSE informational trade-offs, no retry/cancel history) remain open and unchanged, same as listed in `TODO.md`.
+- `New Text Document.txt` (repo root, untracked, empty) — not investigated or touched; not part of this session's scope and doesn't look like application source.
+
+**Exact next task:** Get approval to commit the v1.2 Planning analysis (`TODO.md` + this `SESSION_STATE.md` entry) on `feature/v1.2-development`. Once approved to actually start building, Phase 1 item 1 (add a frontend job — `npm ci && npm run test && npm run build && npm run lint` — to `.github/workflows/ci.yml`, parallel to the existing backend job) is the recommended entry point: small, no live services needed, and closes a real blind spot (CI currently can't catch a frontend regression at all) before any new v1.2 feature lands on top of an unverified frontend.
+
+---
 
 ### 2026-07-18 (latest) — CI fixed: `pytest` invocation was never putting the repo root on `sys.path`
 

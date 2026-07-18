@@ -4,6 +4,79 @@ Generated from a full-repo analysis on 2026-07-17. See `PROJECT_ANALYSIS.md` for
 
 ---
 
+## v1.2 Planning (2026-07-18) — architecture review, current limitations, roadmap
+
+Analysis-only pass, no application code changed. Baseline: tag `v1.1.1-ci-fix` (`b1c9981`, first-ever green GitHub Actions run — see the CI-fix Session Log entry). Done on a new `feature/v1.2-development` branch, which also carries one small commit not yet reflected elsewhere in this file: `pytest.ini` (`pythonpath = .`), which closes the "bare `pytest` still needs `-m`" residual gap named in the CI-fix entry — `python -m pytest` (in `ci.yml`) and `pythonpath = .` (in `pytest.ini`) now both independently put the repo root on `sys.path`, which is redundant but harmless; not worth un-doing either.
+
+### Architecture review (current state)
+
+**Backend** (~2000 lines Python across `backend/`, excluding tests): a FastAPI app that never loads a model itself — it orchestrates a locally running ComfyUI (HTTP+WS) and Ollama (OpenAI-compat HTTP) instance, both sharing one 8GB GPU.
+- `backend/app.py` (78 lines) — entrypoint; lifespan starts the worker, health-checks ComfyUI, runs crash recovery, and drains the worker on shutdown. CORS is an explicit allowlist (empty by default) with narrowed methods/headers, not a wildcard.
+- `backend/core/config.py` (80 lines) — one `Settings` object (`pydantic-settings`), every field has a safe default; nothing required at import time.
+- `backend/core/comfyui_client.py` (153 lines) / `llm_client.py` (82 lines) — the two external-service clients. `comfyui_client.py` carries BUG-1's WS-drop→polling fallback.
+- `backend/core/worker.py` (226 lines) — single-slot FIFO async queue shared by both job kinds (the primary anti-OOM guard); owns the `JobStatus`/`ShotStatus`/`LogLevel`/`LogStage` enums and `JobCancelled`.
+- `backend/core/job_store.py` (344 lines) — persistence: one shared `sqlite3` connection (WAL, `threading.Lock`-guarded per BUG-6), three tables (`jobs`, `shots`, `job_logs`), publishes to an `EventBus` after every mutating write.
+- `backend/core/events.py` (68 lines) — small in-memory SSE pub/sub; explicit, named single-process assumption.
+- `backend/core/recovery.py` (146 lines) — startup reconciliation (resubmit-never-started vs. reuse-ComfyUI-history-for-already-submitted).
+- `backend/core/gpu_memory.py` (33 lines) — best-effort VRAM cleanup, mostly a no-op safety net (ComfyUI, not this process, holds the model).
+- `backend/api/routes/generate_script.py` (58 lines) — small, single-purpose.
+- `backend/api/routes/storyboard.py` (**653 lines — by far the largest file in the codebase**, roughly a third of all backend code) — the naive shot-splitter, workflow-templating logic, the full job-execution handler, 8 HTTP routes (status/list/retry/cancel/download + 3 SSE streams), 3 SSE generator functions, and the artifact-metadata helper, all in one module. See Limitations below.
+- `backend/models/schemas.py` (102 lines) — every Pydantic request/response model.
+
+**Frontend** (~870 lines TS/TSX across `frontend/src/`, excluding tests): React 19 + Vite + TypeScript. No state management library, no CSS framework — plain `App.css` and local component state throughout, a deliberately dependency-light stack (only real runtime dependency: `react-router-dom`). Three data-fetching hooks (`useJob`, `useJobList`, `useJobLogs`) each own one `EventSource` connection since the SSE migration, each with a REST-based manual-refresh fallback retained. Two routed pages (`DashboardPage`, `JobDetailPage`); presentational components (`JobRow`, `JobTimeline`, `JobExecutionLogs`, `JobArtifacts`, `StatusFilter`, the two submit forms) each isolate any non-trivial logic into a pure, separately-tested function (`buildTimelineEvents`, `classifyArtifact`, `formatBytes`/`formatTime`).
+
+**Tests:** 128 backend (`pytest`, calling route/generator functions directly rather than a real ASGI server in most cases — one exception needs a real `TestClient` for `Path(..., pattern=...)` validation), 53 frontend (`vitest`, hand-rolled fakes like `FakeEventSource` rather than a mocking library). Both 100% passing as of `v1.1.1-ci-fix`.
+
+**End-to-end data flow:** browser form → REST POST → `worker.submit()` enqueues → `JobStore.create_job()` persists + publishes → the single worker slot dequeues FIFO → (`generate_script`: one Ollama call) or (`storyboard`: per-shot ComfyUI submit + WS/poll wait + download) → every state change persisted + published → open `EventSource` connections wake, re-fetch, push to the browser. No polling left anywhere in the frontend as of the SSE migration.
+
+**Deployment model:** single local machine, single user, no auth, `127.0.0.1`-bound, no containerization, no reverse proxy — a deliberate, user-confirmed scope decision (BUG-3), not an oversight or a gap.
+
+### Current limitations
+
+Already tracked elsewhere in this file (pointer only, not re-explained): no dependency lockfile (P2 — see below for why this now has a concrete recent example), no retention/pruning for `job_logs`/`jobs`/`shots` (P3, and `output/` is already 13MB across 7 real job directories and growing), un-cached per-artifact `stat()` on every poll (P3), BUG-5's duplicate `ComfyUIClient` instances (P3, cosmetic), no retry/cancel attempt history (P3), the four SSE informational trade-offs (single-process `EventBus`, browser's 6-connection cap, no custom `EventSource` headers, the 404-signaling compromise), no request size limits (P3), and `generate_script`'s always-full-rerun-on-resume asymmetry (informational, permanent, not a gap).
+
+Newly identified this session:
+- **CI never runs the frontend at all.** `.github/workflows/ci.yml` only runs `pytest`. `npm run test` (53 passing), `npm run build`, and `npm run lint` (`oxlint`) all exist and all pass locally every session, but none are enforced in CI — a frontend regression wouldn't be caught until the next live-validation pass, if at all.
+- **`project_id` is collected and persisted but never surfaced anywhere.** Both submission forms (`ScriptForm`, `StoryboardForm`) collect it, every job response includes it (`types.ts`, schemas) — but there's no dashboard filter or grouping by it. It's the one field in the whole data model that's write-only today.
+- **`storyboard.py` (653 lines) is doing four jobs at once**: route handlers, core business logic (shot-splitting/templating), SSE streaming, and artifact metadata. The only file in the codebase with this kind of breadth, and the one most sessions have had to re-read most carefully before touching.
+- **README's documented architecture tree is stale** — it predates `job_store.py`, `recovery.py`, `events.py`, `llm_client.py`, `frontend/`, `tests/`, and now `pytest.ini`; written at the very first milestone and never updated across the 10+ milestones since.
+- **No code coverage measurement on either side.** 128/53 passing is tracked by count only — nothing measures what fraction of `storyboard.py` (the largest, most load-bearing file) is actually exercised.
+- **A `RUNNING` `generate_script` job still can't be cancelled at all** (Cancel silently has no effect for that one job type mid-run — already named as a scope limit under "Missing features," re-surfaced here since it's a real, visible UX gap, not just a code-level note).
+- **ComfyUI cancellation is cooperative only, never `/interrupt`-based** — a cancelled job's in-flight shot still finishes generating before cancellation takes effect (same visibility note as above).
+
+### v1.2 roadmap (proposed phases — not yet approved, no work started)
+
+**Phase 1 — close the gaps this session's own CI investigation exposed** (small, low-risk, high-confidence):
+- Add a frontend job to `.github/workflows/ci.yml` (`npm ci && npm run test && npm run build && npm run lint`), parallel to the existing backend job.
+- Add a dependency lockfile — motivated by a concrete, recent example: the CI investigation two sessions ago was rooted in `requirements.txt`'s unbounded `pytest>=8.0` floor resolving to a much newer major version on a fresh install than what the long-lived local `.venv` had. `frontend/` already has `package-lock.json`; the backend has nothing equivalent.
+- (Optional, cheap) Refresh README's architecture tree to match the current file layout.
+
+**Phase 2 — make existing, currently-invisible data useful:**
+- Surface `project_id` in the dashboard — a project filter mirroring `StatusFilter.tsx`'s existing, already-tested pattern, and/or grouping.
+- Retry/cancel attempt history (a genuinely new append-only events table) — the one item on this whole list that needs real new schema/design work, not just exposing data that already exists.
+
+**Phase 3 — code health:**
+- Split `storyboard.py` along its four responsibilities (routes / shot-splitting+templating logic / SSE streaming / artifact helpers) — a refactor, not a behavior change; the highest-value single-file cleanup available.
+- Add coverage measurement (`pytest-cov` / `vitest --coverage`) to both suites, surfaced in CI once Phase 1's frontend CI job exists.
+
+**Phase 4 — deeper capability, needs explicit scope confirmation before any design work** (not recommended to start without a decision, given BUG-3's already-confirmed localhost-only scope):
+- True ComfyUI `/interrupt` support for immediate (not just between-shot) cancellation.
+- `generate_script` cancellation mid-run.
+- A real job/log retention policy, now that real accumulated data exists (13MB+ and growing).
+- Anything multi-user/remote-access related — **not recommended** unless the user explicitly revisits the localhost-only decision from BUG-3; named here only so it isn't silently forgotten as a future option.
+
+### Recommended next features (concrete, prioritized)
+
+1. **Frontend CI job** — smallest, highest-confidence, directly motivated by this session's own CI debugging experience.
+2. **Dependency lockfile** — same motivation, closes the exact class of gap that made the CI bug possible.
+3. **`project_id` dashboard filter** — smallest genuinely new user-facing feature; reuses an existing, already-tested UI pattern.
+4. **`storyboard.py` refactor** — no behavior change, pure maintainability investment now that the file has stopped growing (SSE, artifacts, and logs all landed inside it across the last several milestones).
+5. **Retry/cancel attempt history** — the most substantial single feature left on this list; needs its own dedicated plan before implementation.
+
+Recommendation: start with #1. It's small, directly motivated by a real incident this project just went through (the CI investigation), and closes a real blind spot before anything else in v1.2 gets built on top of a frontend that CI never actually verifies.
+
+---
+
 ## Completed [x]
 
 - [x] FastAPI backend skeleton with lifespan-managed startup/shutdown (`backend/app.py`)
@@ -62,7 +135,7 @@ Generated from a full-repo analysis on 2026-07-17. See `PROJECT_ANALYSIS.md` for
 
 ## Current tasks [ ]
 
-- [ ] Nothing actively in progress. `storyboard.py` pure-helper test coverage (see "Completed" above) landed this session, added but not yet committed pending approval. This repo has a real GitHub remote (`origin` → `https://github.com/hokphaymany2025-oss/manytv-ai.git`) — whether `.github/workflows/ci.yml` has actually fired and passed on a real GitHub Actions runner still hasn't been directly confirmed in any session yet (no `gh` CLI or web access available to check) — worth a quick look next time there's a reason to be in the GitHub UI anyway, but not blocking anything. The prior session's SSE migration commit (`cb090d7`) also still hasn't been pushed to `origin`.
+- [ ] **v1.2 development, planning stage.** All backend/frontend work through `v1.1.1-ci-fix` is committed, pushed, and CI-confirmed green (see the CI-fix Session Log entry — `b1c9981` was the first passing GitHub Actions run). Current branch `feature/v1.2-development` (one commit ahead of `master`: `b657f5b`, adds `pytest.ini`) carries this file's "v1.2 Planning" section (architecture review, current limitations, 4-phase roadmap) — analysis-only, verified accurate against the live repo, still awaiting approval to commit. No v1.2 feature work has started. Recommended entry point once approved: Phase 1 item 1, a frontend CI job.
 
 ---
 
