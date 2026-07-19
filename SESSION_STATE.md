@@ -1,10 +1,34 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 5) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 6) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 6) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing from the pushed `088e3dd` (CI-trigger-gap documentation). Just prior to this checkpoint, re-checked the GitHub API and confirmed: still no PR open against `master`, still only 7 total Actions runs (all on `master`, none newer) — the pre-filled PR link handed to the user two sessions ago has not been opened yet. No application logic touched this session.
+
+- **Branch:** `feature/v1.2-development`, up to date with `origin/feature/v1.2-development` (0 ahead/behind) — `088e3dd` confirmed actually pushed and present on `origin`.
+- **Working tree:** clean. Nothing uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning — matches.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — this was a verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **The pre-filled PR link (`feature/v1.2-development` → `master`) still has not been opened** — re-confirmed via the Actions/PRs API this session, not assumed. This is a user action; nothing further to chase automatically until it's opened.
+- Once a real CI run happens (via that PR), still open: whether to add this branch (or a wildcard) to `ci.yml`'s `push:` trigger so future commits get live feedback without needing a PR first — named, not decided.
+- v1.2 Phases 1-3 remain fully closed; Phase 4 still explicitly gated on revisiting BUG-3's scope decision.
+
+**Exact next task:** Get the PR opened (user action), then confirm its CI run is actually green — this branch's first real one.
+
+---
 
 ### 2026-07-19 (checkpoint, 5) — State verification only, no code changes
 
