@@ -1,10 +1,55 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 11) — State verification only, no code changes. Confirms the generate_script live-validation entry immediately below; its doc updates are staged but not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 12) — State verification only, no code changes. Confirms the `/interrupt` live-validation entry immediately below; its doc updates are staged but not yet committed. **Both Phase 4 live-validation items are now done** — Phase 4 is fully closed, engineering-wise. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 12) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "live-validation: ComfyUI /interrupt support" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning`, 2 commits ahead of `origin/feature/v1.3-planning` (`10e9fca`, `dc6cf0d` — neither pushed).
+- **Working tree:** `SESSION_STATE.md`, `TODO.md` modified (the `/interrupt` live-validation entry and its TODO updates from the prior pass) — nothing unexpected, matches exactly what that session left uncommitted. No application code changed.
+- **Backend:** `python -c "from backend.app import app"` confirmed clean. Full `python -m pytest tests/ -v` re-run not repeated this pass (already confirmed **192 passed** this session, after both ComfyUI and the backend were stopped following live-validation — nothing since has touched application code).
+- **Frontend:** not re-run this pass — already confirmed **58 passed** / clean build / clean lint this same session, no frontend files touched since.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **This session's + the prior session's doc updates (`SESSION_STATE.md`, `TODO.md`) are staged but not committed** — waiting on `/commit`.
+- **2 local commits (`10e9fca`, `dc6cf0d`) still not pushed** to `origin/feature/v1.3-planning`.
+- **Phase 4 is fully closed, engineering-wise** — both live-validation items (`/interrupt`, `generate_script` cancellation) are done. Nothing technical blocks merging this branch anymore; it's purely a scheduling decision now.
+- `origin/feature/v1.2-development` deletion still an open, low-priority decision from earlier sessions.
+
+**Exact next task:** Commit this session's + the prior session's doc updates via `/commit`. Then: decide whether to push, and separately, decide when to open a PR / merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (live-validation: ComfyUI /interrupt support) — Real mid-generation interrupt confirmed against a live Arc A750; closes out Phase 4's live-validation
+
+**What was completed:** Live-validated the `/interrupt` support feature (from an earlier session on this branch) against a real, running ComfyUI instance — the last unverified Phase 4 item, following last session's `generate_script` cancellation validation. Started ComfyUI for real (`scripts/run_comfyui.ps1 -ComfyUIPath D:\NewProjects\ComfyUI -VramHeadroomGB 2`, confirmed on the actual Arc A750/XPU) and the ManyTV backend. Startup recovery found a genuine leftover 2-shot `storyboard` job from an earlier session and resumed it, submitting shot 0 to ComfyUI — used that real in-flight generation directly rather than fabricating one.
+
+**What happened:** Cancelled the job via `POST /api/jobs/{id}/cancel` while shot 0 was mid-KSampler (step 7 of 20, confirmed via the backend's own progress logging). The backend log shows the real chain working exactly as designed: `POST http://127.0.0.1:8188/api/jobs/{prompt_id}/cancel` → `200 OK` from ComfyUI, then `Job ... cancelled` logged ~620ms after the cancel request — nowhere near waiting out the remaining ~13 steps (would have been many more seconds) or `GENERATION_TIMEOUT_SECONDS` (600s default). **Checked ComfyUI's own `/history` for the interrupted prompt directly, not just the ManyTV API**: `status_str: "error"`, `completed: false`, and a genuine `execution_interrupted` message at node 8 (`KSampler`) — the exact WS message type `wait_for_completion`'s new branch was built to catch, now seen for real rather than only in a mocked test. The job correctly ended `cancelled` (not `failed`), shot 0 correctly ended `failed` with a clear `"...was interrupted."` error message (the CANCELLING-vs-not disambiguation working as designed), and shot 1 stayed `pending` — never submitted, confirming the whole job stopped rather than just the interrupted shot. Submitted a fresh storyboard job immediately after: picked up and ran normally, completing end-to-end (~28s) with a real, valid 487KB `.mp4` — confirming the worker/storyboard_engine wasn't left in any stuck state by the interrupt path. Stopped both ComfyUI and the backend cleanly afterward.
+
+**Result:** the `/interrupt` feature (real endpoint, `execution_interrupted` handling, CANCELLING-vs-not disambiguation, and the folded-in history-completeness fix) all hold up under a real mid-generation cancel against real hardware — genuinely immediate (not waited-out) interruption, correct terminal states, no side effects on subsequent jobs. **Both Phase 4 live-validation items (this one and last session's `generate_script` cancellation) are now done — Phase 4 is fully closed engineering-wise.**
+
+**Files changed:** `SESSION_STATE.md`, `TODO.md` (this entry + marking the item validated). No application code changed — a pure verification pass, nothing needed fixing.
+
+**Verification:** `python -m pytest tests/ -v` → **192 passed** (114.70s), 1 pre-existing warning, re-confirmed after both live services were stopped. `npm run test -- --run` → **58 passed** (11 files). `npm run build` → clean. `npm run lint` → clean except the same 2 pre-existing warnings (`JobArtifacts.tsx`, `JobTimeline.tsx`, `react(only-export-components)`).
+
+**Remaining problems / blockers:** None new.
+- **This session's + the prior session's doc updates are staged but not committed** — waiting on `/commit`.
+- **2 local commits (`10e9fca`, `dc6cf0d`) still not pushed** to `origin/feature/v1.3-planning`.
+- `feature/v1.3-planning` still not merged to `master` — with both live-validations now done, nothing engineering-side blocks that decision anymore.
+- `origin/feature/v1.2-development` deletion still an open, low-priority decision from earlier sessions.
+
+**Exact next task:** Commit this session's doc updates via `/commit`. Then: decide whether to push, and separately, decide when to open a PR / merge `feature/v1.3-planning` into `master` — Phase 4's engineering work and both its live-validations are complete, so this is now purely a scheduling decision, not gated on anything technical.
+
+---
 
 ### 2026-07-19 (checkpoint, 11) — State verification only, no code changes
 
