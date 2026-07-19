@@ -20,7 +20,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: python -m pytest tests/ -v
+      - run: python -m pytest --cov=backend --cov-report=term-missing tests/ -v
 
   frontend:
     runs-on: ubuntu-latest
@@ -40,7 +40,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run test
+      - run: npm run test -- --coverage
 
       - run: npm run build
 

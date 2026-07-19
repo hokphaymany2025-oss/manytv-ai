@@ -1,10 +1,50 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 3) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 4) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 4) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "Phase 3, fully closed" session immediately below (coverage reporting wired into CI). No application logic touched.
+
+- **Branch:** `feature/v1.2-development`, up to date with `origin/feature/v1.2-development` (0 ahead/behind).
+- **Working tree:** matches exactly what the prior session left uncommitted — `.github/workflows/ci.yml` (the coverage-in-CI wiring), `TODO.md`, `SESSION_STATE.md`. Nothing unexpected found; still waiting on the same approval named in the prior entry.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning — matches.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — this was a verification-only pass.
+
+**Remaining problems / blockers:** None new. Same as the prior entry:
+- The coverage-in-CI change (`.github/workflows/ci.yml`) plus its `TODO.md`/`SESSION_STATE.md` bookkeeping are ready but **not yet committed** — waiting on explicit approval via `/commit`.
+- **v1.2 is otherwise fully closed** once this lands — nothing scheduled remains except Phase 4, explicitly gated on the user revisiting BUG-3's localhost-only scope decision before any design work.
+
+**Exact next task:** Run `/commit` to commit `.github/workflows/ci.yml`, `TODO.md`, and `SESSION_STATE.md` on `feature/v1.2-development`, then push and confirm the real GitHub Actions run shows both coverage reports in its logs.
+
+---
+
+### 2026-07-19 (Phase 3, fully closed) — Coverage reporting wired into CI
+
+**What was completed:** Picked up via `/next_tasks` as the one remaining concretely-scoped item that didn't need a user scope decision first (unlike Phase 4). Confirmed starting state first: branch fully synced with `origin` (last commit `a959632`, which landed out-of-band between sessions — tracks `.claude/commands/*.md`, the project's own slash-command definitions, previously untracked local tooling).
+
+- `.github/workflows/ci.yml`: backend job's `python -m pytest tests/ -v` → `python -m pytest --cov=backend --cov-report=term-missing tests/ -v`; frontend job's `npm run test` → `npm run test -- --coverage`. Both tools (`pytest-cov`, `@vitest/coverage-v8`) were already installed from the two prior coverage-measurement sessions — this only changes what CI actually invokes.
+- **Deliberately report-only** — no `--cov-fail-under` on either side, matching this project's established practice of surfacing a number before ever deciding to gate on it.
+- Verified locally with the *exact* CI commands before changing anything, not just the pre-existing plain invocations: backend → **164 passed, 91% overall** (893 statements, 78 missed); frontend → **58 passed, 66.94% overall** (242 statements, 162 covered) — both coverage reports rendered correctly, confirming no drift between local and CI invocation. `npm run build` clean, `npm run lint` clean (same 2 pre-existing warnings, `JobTimeline.tsx`/`JobArtifacts.tsx`).
+
+**Files changed:** `.github/workflows/ci.yml` only (2 one-line changes). `TODO.md`, `SESSION_STATE.md` for bookkeeping. No application or test code touched.
+
+**Remaining problems / blockers:** None blocking. **v1.2 is now fully closed** — every Phase 1-3 item, including both previously-optional/deferred ones (README refresh, coverage-in-CI), is done. Only Phase 4 remains, and it is explicitly **not** to be started without a scope conversation with the user first (per `TODO.md`'s own gating note) — it would touch real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation, a retention policy, and/or any multi-user/remote-access question, all of which conflict with the currently-confirmed localhost-only, single-user deployment decision (BUG-3) unless that's explicitly revisited.
+- **This session's change is not yet committed** — waiting for approval, per this project's standing convention (`/implement` doesn't commit).
+
+**Exact next task:** Get approval to commit this session's `.github/workflows/ci.yml` change (plus `TODO.md`/`SESSION_STATE.md` bookkeeping) on `feature/v1.2-development`, then push and confirm the real GitHub Actions run shows both coverage reports in its logs. After that, v1.2 has nothing left except the explicitly-gated Phase 4 — the natural next conversation is whether/when to revisit that scope decision.
+
+---
 
 ### 2026-07-19 (checkpoint, 3) — State verification only, no code changes
 
