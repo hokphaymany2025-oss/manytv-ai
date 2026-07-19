@@ -1,10 +1,56 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (Phase 4: mid-run generate_script cancellation) — implemented and tested on `feature/v1.3-planning`, not yet committed. All three Phase 4 engineering items are now done. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 11) — State verification only, no code changes. Confirms the generate_script live-validation entry immediately below; its doc updates are staged but not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 11) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "live-validation: generate_script cancellation" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning`, 1 commit ahead of `origin/feature/v1.3-planning` (`10e9fca`, still not pushed).
+- **Working tree:** `SESSION_STATE.md`, `TODO.md` modified (the live-validation entry and its TODO updates from the prior pass) — nothing unexpected, matches exactly what that session left uncommitted. No application code changed.
+- **Backend:** `python -c "from backend.app import app"` confirmed clean. Full `python -m pytest tests/ -v` re-run not repeated this pass (already confirmed **192 passed** twice this session — once at session start, once before live-validating — and nothing since has touched application code).
+- **Frontend:** not re-run this pass — no frontend files touched since the last confirmed-green run (58 passed / clean build / clean lint, from the prior Phase 4 sessions).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **This session's doc updates (`SESSION_STATE.md`, `TODO.md`) are staged but not committed** — waiting on `/commit`.
+- **`10e9fca` still not pushed** to `origin/feature/v1.3-planning`.
+- `/interrupt` support remains the one Phase 4 item without live validation — needs a real ComfyUI session, not attempted yet.
+- `feature/v1.3-planning` still not merged to `master`; `origin/feature/v1.2-development` deletion still an open, low-priority decision.
+
+**Exact next task:** Commit this session's + the prior session's doc updates via `/commit`, then decide whether to push `10e9fca`. Independently: live-validate `/interrupt` support against a real ComfyUI instance, or decide when to merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (live-validation: generate_script cancellation) — Real mid-run cancellation confirmed against a real Ollama call; no code changes needed
+
+**What was completed:** Live-validated the previous session's mid-run `generate_script` cancellation feature (`10e9fca`, still uncommitted-to-push at the start of this pass) — the one Phase 4 item that had only ever been exercised through mocks. Per `/next_tasks`'s own recommendation: Ollama was already running on this machine, ComfyUI wasn't, so this was the immediately actionable one of the two remaining live-validation items (the `/interrupt` support still needs a real ComfyUI session).
+
+**What happened:** Started the real backend (`uvicorn backend.app:app --port 8000`). Startup recovery found a genuine leftover `generate_script` job (`d01b794e...`) mid-flight from an earlier, uncleanly-stopped session and resumed it — used that real in-flight job directly rather than submitting a fresh one. Cancelled it via `POST /api/jobs/{id}/cancel`: the request returned in ~100ms with `cancelling`, and the backend log shows the job reaching its terminal `cancelled` state at the **same timestamp** as the cancel request (`22:27:09,099` for both the "cancel requested" and "cancelled" log lines) — the LLM call was genuinely aborted mid-flight at the asyncio level, not waited out to completion or timeout. Confirmed the worker loop itself wasn't left in the deadlocked state the earlier session's real bug had produced: submitted a second, fresh `generate_script` job immediately after — it was picked up and started running right away (no stuck queue), and completed normally end-to-end ~35s later with a real, coherent generated script in its `result.script`. Stopped the backend cleanly afterward (`taskkill`, confirmed `/health` no longer responds).
+
+**Result:** the fix from the previous session's real deadlock (explicit `_cancel_requested_for` intent flag instead of inferring from `task.cancelled()`) holds up under a real cancel against a real in-flight Ollama call — instant cancellation, correct terminal status, no worker-loop deadlock, normal processing of subsequent jobs.
+
+**Not yet done:** `/interrupt` support (Phase 4's other unvalidated item) still needs a real ComfyUI session — not started this pass, ComfyUI wasn't running.
+
+**Files changed:** `SESSION_STATE.md` only (this entry). No application code changed — this was a verification pass, and nothing needed fixing.
+
+**Verification:** `python -m pytest tests/ -v` → **192 passed** (re-confirmed at the start of this session, before any live testing; unaffected by a pure verification pass, not re-run again after). Frontend suite not re-run — no frontend code touched, nothing this pass could have affected there.
+
+**Remaining problems / blockers:** None new.
+- **`10e9fca` still not pushed** to `origin/feature/v1.3-planning` — this pass didn't touch git state, waiting on the same approval named in the prior entry.
+- `/interrupt` support remains the one Phase 4 item without live validation — needs a real ComfyUI session (`scripts/run_comfyui.ps1`), not attempted this pass.
+- `feature/v1.3-planning` still not merged to `master`; `origin/feature/v1.2-development` deletion still an open, low-priority decision.
+
+**Exact next task:** Live-validate `/interrupt` support against a real ComfyUI instance (start it via `scripts/run_comfyui.ps1`, submit a storyboard job, cancel mid-shot, confirm it aborts in seconds rather than waiting for `GENERATION_TIMEOUT_SECONDS`). Independently: push `10e9fca`, and decide when to merge `feature/v1.3-planning` into `master`.
+
+---
 
 ### 2026-07-19 (Phase 4: mid-run generate_script cancellation) — Last Phase 4 engineering item implemented; a real deadlock caught and fixed along the way
 
