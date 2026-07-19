@@ -1,10 +1,35 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (v1.2 merged to master) — PR #1 merged, ci.yml's push trigger left as-is. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 8) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 8) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing from the "v1.2 merged to master" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.2-development`, up to date with `origin/feature/v1.2-development` (0 ahead/behind), tip `fba90fd`.
+- **`master` confirmed in sync:** `origin/master`'s tip is also `fba90fd` — the fast-forward merge landed cleanly, both branches now point at the same commit.
+- **Working tree:** clean, nothing uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning — matches.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass. v1.2 is fully shipped: merged to `master`, CI-verified via PR #1's real Actions run, all local checks green on the merged state.
+
+**Remaining problems / blockers:** None.
+- **Phase 4** is the only named item left in `TODO.md`'s roadmap, and it is explicitly **not started** — gated on the user revisiting BUG-3's localhost-only, single-user scope decision before any design work begins on real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation, a retention policy, or any multi-user/remote-access question.
+- Low-priority, unscheduled, unchanged: BUG-5 (cosmetic duplicate `ComfyUIClient` instances), frontend coverage gaps on untested page shells/forms (accepted convention, not a regression).
+- Whether to delete the now-merged `feature/v1.2-development` branch was never asked — still exists, left alone.
+
+**Exact next task:** None scheduled. Next substantive step, whenever the user is ready, is deciding whether/how to open Phase 4.
+
+---
 
 ### 2026-07-19 (v1.2 merged to master) — PR #1 merged; ci.yml's push trigger left unchanged
 
