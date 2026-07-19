@@ -195,7 +195,7 @@ Recommendation: v1.2's roadmap is now fully closed except the two named, deliber
 
 ## Current tasks [ ]
 
-- [ ] **Phase 4 engineering items all done on `feature/v1.3-planning`, not yet merged to `master`.** Retention policy, real ComfyUI `/interrupt` support, and mid-run `generate_script` cancellation are all implemented and tested (192 passing). **Both are now also live-validated** (2026-07-19, see above) — `/interrupt` against a real Arc A750 ComfyUI instance, `generate_script` cancellation against real Ollama. **Phase 4 is fully closed, engineering-wise.** **Anything multi-user/remote-access related remains explicitly gated** on the user revisiting BUG-3's no-auth/localhost-only scope decision before any design work begins there. What's left is pure scheduling, not gated on anything technical: pushing the local commits, and deciding when to open a PR / merge this branch into `master`.
+- [ ] **Phase 4 engineering items all done on `feature/v1.3-planning`, now pushed to `origin`, not yet merged to `master`.** Retention policy, real ComfyUI `/interrupt` support, and mid-run `generate_script` cancellation are all implemented and tested (192 passing), **both live-validated** (2026-07-19) — `/interrupt` against a real Arc A750 ComfyUI instance, `generate_script` cancellation against real Ollama. **Phase 4 is fully closed, engineering-wise, and fully synced to `origin`** (`e4abb41`, pushed 2026-07-19). **Anything multi-user/remote-access related remains explicitly gated** on the user revisiting BUG-3's no-auth/localhost-only scope decision before any design work begins there. What's left is pure scheduling, not gated on anything technical: deciding when to open a PR / merge this branch into `master`.
 
 ---
 
