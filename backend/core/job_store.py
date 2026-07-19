@@ -381,6 +381,42 @@ class JobStore:
         job that's never been retried (the common case)."""
         return await self._run(self._get_job_attempts_sync, job_id)
 
+    # ---- retention ----
+
+    _TERMINAL_STATUSES = ("done", "failed", "cancelled")
+
+    def _prune_old_jobs_sync(self, cutoff: float) -> list[str]:
+        placeholders = ",".join("?" for _ in self._TERMINAL_STATUSES)
+        rows = self._conn.execute(
+            f"SELECT id FROM jobs WHERE status IN ({placeholders}) AND created_at < ?",
+            (*self._TERMINAL_STATUSES, cutoff),
+        ).fetchall()
+        job_ids = [row["id"] for row in rows]
+        if job_ids:
+            id_placeholders = ",".join("?" for _ in job_ids)
+            self._conn.execute(f"DELETE FROM job_logs WHERE job_id IN ({id_placeholders})", job_ids)
+            self._conn.execute(f"DELETE FROM job_attempts WHERE job_id IN ({id_placeholders})", job_ids)
+            self._conn.execute(f"DELETE FROM shots WHERE job_id IN ({id_placeholders})", job_ids)
+            self._conn.execute(f"DELETE FROM jobs WHERE id IN ({id_placeholders})", job_ids)
+            self._conn.commit()
+        return job_ids
+
+    async def prune_old_jobs(self, older_than_days: int) -> list[str]:
+        """Deletes every terminal (done/failed/cancelled) job whose
+        created_at is older than `older_than_days`, cascading to its shots/
+        job_logs/job_attempts rows. queued/running/resuming/cancelling jobs
+        are never eligible regardless of age -- this only ever removes jobs
+        that have already reached a final state.
+
+        Returns the pruned job ids so the caller (backend/core/retention.py)
+        can also delete each one's output/<job_id>/ directory -- this class
+        has no filesystem knowledge of its own, matching how job_store.py
+        stays orthogonal to ComfyUI/filesystem concerns elsewhere in this
+        file.
+        """
+        cutoff = time.time() - older_than_days * 86400
+        return await self._run(self._prune_old_jobs_sync, cutoff)
+
 
 @lru_cache
 def get_job_store() -> JobStore:

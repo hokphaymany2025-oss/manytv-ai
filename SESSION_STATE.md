@@ -1,10 +1,38 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (post-merge cleanup, checkpoint 9) — now working directly on `master`; local feature branch deleted, remote copy still pending a user decision. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (Phase 4 kickoff: retention policy) — on `feature/v1.3-planning`; job/log retention implemented, tested, not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (Phase 4 kickoff: retention policy) — Job/log retention policy implemented on `feature/v1.3-planning`
+
+**What was completed:** First real Phase 4 work. `feature/v1.3-planning` turned out to be a branch the user had already created outside this conversation (found via `git status`/`git branch -vv` after a prior `/analyze`) — confirmed its purpose via `AskUserQuestion` before touching it: start scoping Phase 4 here. A second `AskUserQuestion` clarified that Phase 4 bundles four items, and only "multi-user/remote-access" actually requires revisiting BUG-3's no-auth/localhost-only decision — the other three (`/interrupt`, mid-run `generate_script` cancellation, retention policy) are pure engineering with no security/scope implications. User picked **retention policy** as the first item.
+
+Presented a design (files to change, reasoning, risks) before writing code, per `/implement`'s explicit "wait for approval" step, since this is inherently destructive (permanently deletes job history and generated files). A third `AskUserQuestion` resolved the one open design choice: prune **startup-only** (matching `recovery.py`'s existing pattern), not also via an on-demand endpoint.
+
+**Implementation:**
+- `backend/core/config.py`: new `job_retention_days: int = 0` (0 = disabled by default — opt-in, not silently active, matching this project's caution around destructive operations). `.env.example` documents it.
+- `backend/core/job_store.py`: new `prune_old_jobs(older_than_days)` — deletes `job_logs`/`job_attempts`/`shots`/`jobs` rows for `done`/`failed`/`cancelled` jobs older than the cutoff (never `queued`/`running`/`resuming`/`cancelling`, regardless of age); returns the pruned job ids so the caller can also remove output files (JobStore has no filesystem knowledge of its own).
+- New `backend/core/retention.py` — thin orchestrator mirroring `recovery.py`'s shape: calls `prune_old_jobs`, then `shutil.rmtree(ignore_errors=True)`s each pruned job's `output/<job_id>/` directory. No-ops if retention is disabled.
+- `backend/app.py`: wired into `lifespan`, right after `resume_incomplete_jobs` — disjoint from crash recovery by construction (recovery only touches non-terminal jobs, pruning only touches terminal ones).
+- Tests: 4 new in `tests/test_job_store.py`, 4 new in `tests/test_retention.py` (real `JobStore`/real filesystem under `tmp_path`, matching `test_recovery.py`'s convention rather than mocking).
+
+**Verification:** `python -c "from backend.app import app"` confirmed the import chain resolves cleanly. `python -m pytest tests/ -v` → **172 passed** (164 prior + 8 new). `npm run test` → 58 passed (unaffected, backend-only change). `npm run build` clean. `npm run lint` clean (2 pre-existing warnings only).
+
+**Files changed:** `backend/core/config.py`, `backend/core/job_store.py`, `backend/core/retention.py` (new), `backend/app.py`, `.env.example`, `tests/test_job_store.py`, `tests/test_retention.py` (new), `TODO.md`, `SESSION_STATE.md`. No frontend files touched.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention (`/implement` doesn't commit).
+- `feature/v1.3-planning` itself is still local-only, not pushed.
+- Phase 4's other two engineering items (real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation) remain open, either independently pickable next.
+- Multi-user/remote-access work remains explicitly gated on revisiting BUG-3's scope decision — not touched this session.
+- `origin/feature/v1.2-development` (the old, fully-merged branch) still exists on `origin` — its deletion is still an open, low-priority decision from an earlier session, unrelated to this one.
+
+**Exact next task:** Get approval to commit this session's retention-policy changes on `feature/v1.3-planning`. Once approved: push the branch, and independently pick up either of Phase 4's remaining engineering items (`/interrupt` support or mid-run cancellation) next — no dependency between them.
+
+---
 
 ### 2026-07-19 (post-merge cleanup, checkpoint 9) — Now on `master`; local feature branch deleted, remote deletion pending
 
