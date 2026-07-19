@@ -1,10 +1,43 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 10) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (Phase 4: real ComfyUI /interrupt support) — implemented and tested on `feature/v1.3-planning`, not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (Phase 4: real ComfyUI /interrupt support) — Immediate mid-generation cancellation implemented on `feature/v1.3-planning`
+
+**What was completed:** Second Phase 4 item, following the retention policy. User first asked for an analysis-only pass ("study worker.py, comfyui_client.py, job status transitions; design first; do not modify code") — read `worker.py`, `comfyui_client.py`, `storyboard_engine.py`, `storyboard.py`'s `cancel_job` route, and (critically) **the actual installed ComfyUI source at `D:\NewProjects\ComfyUI`** (`server.py`, `execution.py`, `comfy_execution/jobs.py`), not general docs — matching this project's own established standard from BUG-1's investigation.
+
+**Real findings from that verification, not assumed:**
+- The right endpoint is `POST /api/jobs/{prompt_id}/cancel` (atomic, `interrupt_if_running` under ComfyUI's own queue mutex) — not the legacy global `POST /interrupt`, whose own prompt_id check isn't atomic with the interrupt itself.
+- An interrupted prompt sends a distinct `execution_interrupted` WS message, which `wait_for_completion` had no handling for at all — it fell through to the terminal "executing, node=None" event (confirmed to fire unconditionally regardless of success/failure/interrupt) and returned whatever `/history` held as a false success.
+- ComfyUI's `/history` status doesn't distinguish "interrupted" from "genuinely failed" (`completed: False` either way) — and this exact ambiguity was **already a latent, pre-existing gap** in the WS-drop polling fallback (BUG-1's path) and the SUBMITTED-shot resume-reconciliation branch, neither of which checked `status.completed` before. Confirmed via `AskUserQuestion` to fold this fix into the same change (recommended: leaving it unfixed would make the new interrupt feature silently misbehave under a WS-drop).
+
+**Design, approved via a second `AskUserQuestion`** (folding in the history-completeness fix): job-level cancellation intent is disambiguated by re-checking the job's own persisted `CANCELLING` status at the moment an interrupt exception is caught, not by exception type alone — correct even in the edge case of a real workflow bug coinciding with a cancel request, and correct for the case of something *external* to ManyTV interrupting a prompt (e.g. ComfyUI's own UI stop button), which should still end the job `FAILED`, not silently `CANCELLED`.
+
+**Implementation:**
+- `backend/core/comfyui_client.py`: new `ComfyUIInterrupted(ComfyUIError)`; new `cancel_prompt(prompt_id) -> bool`; `wait_for_completion` gains an `execution_interrupted` branch; new `_raise_if_history_incomplete(history, prompt_id)` wired into `_poll_history_until_done` and the resume-reconciliation branch only (not `get_history()`/the WS success path directly — provably unreachable there once `execution_interrupted` is handled, and baking it into `get_history()` itself would have broken `_poll_history_until_done`'s existing "any ComfyUIError = keep polling" retry loop).
+- `backend/core/storyboard_engine.py`: new `request_shot_interrupt(job_id)` (best-effort, swallows ComfyUI-unreachable errors); new `except ComfyUIInterrupted` branch in `_run_storyboard_job` before the generic `except Exception`, implementing the CANCELLING-vs-not disambiguation above; the resume-reconciliation branch now treats a found-but-incomplete history the same as "not found" (resubmit) — required a small but real fix: validating completeness *before* assigning to the outer `history` variable, since a bare re-check after the fact would have left `history` non-`None` on the exception path and silently skipped resubmission.
+- `backend/api/routes/storyboard.py`: `cancel_job` calls `request_shot_interrupt` after setting `CANCELLING`, for `kind == "storyboard"` only — one narrow import, matching the Phase 3 refactor's discipline of not reintroducing `ComfyUIClient`/`Settings` into the routes file.
+- **Real test-isolation bug found and fixed while writing tests**: `tests/test_job_routes.py`'s existing cancel tests were silently reaching the *real* global `JobStore` via `request_shot_interrupt`'s own `get_job_store()` module-level binding — the exact class of gap the Phase 3 refactor's own notes already named (a patched name in one module doesn't affect the same name bound in another). Fixed by also patching `storyboard_engine_module.get_job_store` in that file's shared `_patch_store_and_worker` helper.
+- New `tests/test_cancellation.py` (16 cases) covering all three layers: `comfyui_client.py` (`cancel_prompt` success/no-op/unreachable, `execution_interrupted` → `ComfyUIInterrupted`, `_raise_if_history_incomplete` via `_poll_history_until_done` for absent-status/complete/incomplete histories), `storyboard_engine.py` (`request_shot_interrupt`'s three cases; `_run_storyboard_job`'s CANCELLING-vs-not branches — the CANCELLING case built by flipping the job's status *during* the mocked `wait_for_completion` call, to genuinely simulate the real race rather than short-circuiting on the shot loop's pre-existing top-of-iteration check; the resume-reconciliation resubmit-on-incomplete-history case), and the `cancel_job` route.
+
+**Verification:** `python -c "from backend.app import app"` confirmed clean. `python -m pytest tests/ -v` → **188 passed** (172 prior + 16 new). `npm run test`/`build`/`lint` unaffected (backend-only change), re-confirmed green.
+
+**Files changed:** `backend/core/comfyui_client.py`, `backend/core/storyboard_engine.py`, `backend/api/routes/storyboard.py`, `tests/test_job_routes.py`, `tests/test_cancellation.py` (new), `TODO.md`, `SESSION_STATE.md`. No frontend files.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention (`/implement` doesn't commit).
+- **Not live-validated against a real running ComfyUI** — needs a real mid-generation cancel to confirm the shot actually aborts in seconds rather than waiting for `GENERATION_TIMEOUT_SECONDS`. Matching this project's established practice (see BUG-1's history), this is the natural follow-up, not a blocker to calling the code itself done.
+- Phase 4's last remaining engineering item (mid-run `generate_script` cancellation) is still open, independent of everything above.
+- Multi-user/remote-access work remains explicitly gated on revisiting BUG-3's scope decision — untouched.
+- `feature/v1.3-planning` is pushed (`64cdf90`) but this session's new commit isn't yet; `origin/feature/v1.2-development` (old, fully-merged branch) still exists, deletion still an open low-priority decision from an earlier session.
+
+**Exact next task:** Get approval to commit this session's `/interrupt`-support changes on `feature/v1.3-planning`, then push. Independently: live-validate against a real ComfyUI instance, or pick up mid-run `generate_script` cancellation next.
+
+---
 
 ### 2026-07-19 (checkpoint, 10) — State verification only, no code changes
 

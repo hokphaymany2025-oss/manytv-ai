@@ -29,7 +29,12 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from backend.core.comfyui_client import ComfyUIClient, ComfyUIError
+from backend.core.comfyui_client import (
+    ComfyUIClient,
+    ComfyUIError,
+    ComfyUIInterrupted,
+    _raise_if_history_incomplete,
+)
 from backend.core.config import Settings, get_settings
 from backend.core.job_store import get_job_store
 from backend.core.worker import Job, JobCancelled, JobStatus, LogLevel, LogStage, ShotStatus, worker
@@ -97,6 +102,36 @@ async def _save_history_outputs(client: ComfyUIClient, history: dict[str, Any], 
     return saved
 
 
+async def request_shot_interrupt(job_id: str) -> None:
+    """Best-effort: if this job currently has a shot mid-generation
+    (SUBMITTED to ComfyUI, outcome not yet known), asks ComfyUI to interrupt
+    it immediately rather than waiting for _run_storyboard_job's shot loop to
+    notice CANCELLING between shots. Called from POST /jobs/{id}/cancel
+    (backend/api/routes/storyboard.py) right after that route records the
+    CANCELLING status.
+
+    Deliberately swallows a ComfyUI-unreachable/rejected cancel: the
+    existing between-shot cooperative check is the correctness fallback
+    regardless of whether this succeeds, so losing only the "immediate"
+    property here is acceptable -- losing cancellation entirely is not.
+    """
+    store = get_job_store()
+    shot_rows = await store.get_shots(job_id)
+    submitted = next(
+        (row for row in shot_rows if row["status"] == ShotStatus.SUBMITTED.value and row["prompt_id"]),
+        None,
+    )
+    if submitted is None:
+        return
+    try:
+        await comfyui_client.cancel_prompt(submitted["prompt_id"])
+    except ComfyUIError as exc:
+        logger.warning(
+            "Could not interrupt ComfyUI prompt %s for job %s's cancel request (%s); "
+            "will still stop between shots.", submitted["prompt_id"], job_id, exc,
+        )
+
+
 async def _run_storyboard_job(job: Job) -> dict[str, Any]:
     settings = get_settings()
     store = get_job_store()
@@ -122,10 +157,13 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
         # Checked at the top of every iteration -- including ones about to
         # be DONE-skipped below -- so a /cancel request is noticed between
         # any two shots, not just before the next one that does real work.
-        # Only takes effect between shots: a shot already SUBMITTED to
-        # ComfyUI keeps running to completion (bounded by
-        # GENERATION_TIMEOUT_SECONDS) since there's no ComfyUI /interrupt
-        # call here -- see TODO.md for why that's a deliberate scope limit.
+        # This is the fallback path: request_shot_interrupt() (called from
+        # the /cancel route) also tries to interrupt a shot already
+        # SUBMITTED to ComfyUI immediately, via ComfyUI's own cancel
+        # endpoint -- see the ComfyUIInterrupted handling below. If that
+        # best-effort call fails (ComfyUI unreachable, older version without
+        # the endpoint), this check is what still guarantees the job stops,
+        # just bounded by GENERATION_TIMEOUT_SECONDS instead of immediate.
         current_job_row = await store.get_job(job.id)
         if current_job_row is not None and current_job_row["status"] == JobStatus.CANCELLING.value:
             raise JobCancelled(f"Job {job.id} cancelled during shot processing.")
@@ -151,7 +189,18 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
             # lifetime (see BUG-1), so check whether it actually finished
             # before assuming it's lost.
             try:
-                history = await comfyui_client.get_history(shot_row["prompt_id"])
+                found_history = await comfyui_client.get_history(shot_row["prompt_id"])
+                # A history entry can exist for a prompt that finished
+                # without succeeding (a real error, or an interrupt -- see
+                # comfyui_client.py's _raise_if_history_incomplete). Treated
+                # identically to "no history found" below: resubmitting is
+                # the correct recovery either way, since there's nothing
+                # valid to reuse. Deliberately validated before assigning to
+                # the outer `history` (still None at this point) -- if this
+                # raises, `history is None` below must still hold true so
+                # the resubmit branch actually runs, not silently skipped.
+                _raise_if_history_incomplete(found_history, shot_row["prompt_id"])
+                history = found_history
                 prompt_id = shot_row["prompt_id"]
                 logger.info(
                     "Job %s shot %d: found existing ComfyUI history for prompt %s, reusing it "
@@ -222,6 +271,32 @@ async def _run_storyboard_job(job: Job) -> dict[str, Any]:
                     comfyui_client.wait_for_completion(prompt_id, on_progress=_progress),
                     timeout=settings.generation_timeout_seconds,
                 )
+            except ComfyUIInterrupted as exc:
+                # ComfyUI reported this prompt was interrupted -- either our
+                # own request_shot_interrupt() (see above) or something else
+                # external to ManyTV's own controls (e.g. ComfyUI's own UI
+                # stop button). Disambiguate by re-checking whether *this*
+                # job is actually CANCELLING right now: only then does the
+                # job itself end CANCELLED rather than FAILED. The shot row
+                # is marked FAILED either way (matching every other shot
+                # error path) so a subsequent /retry resets it back to
+                # PENDING via reset_shots_by_status, rather than leaving a
+                # stale SUBMITTED row pointing at a prompt_id whose ComfyUI
+                # history is now known-incomplete.
+                error_msg = f"Shot {shot_index} (prompt {prompt_id}) was interrupted."
+                await store.upsert_shot(job.id, shot_index, ShotStatus.FAILED.value, error=error_msg, finished_at=time.time())
+                current_job_row = await store.get_job(job.id)
+                is_our_own_cancel = (
+                    current_job_row is not None and current_job_row["status"] == JobStatus.CANCELLING.value
+                )
+                await store.add_job_log(
+                    job.id,
+                    LogLevel.INFO.value if is_our_own_cancel else LogLevel.ERROR.value,
+                    LogStage.SHOT.value, error_msg, shot_index=shot_index,
+                )
+                if is_our_own_cancel:
+                    raise JobCancelled(f"Job {job.id} cancelled during shot {shot_index} (ComfyUI interrupted).") from exc
+                raise
             except asyncio.TimeoutError as exc:
                 error_msg = (
                     f"Shot {shot_index} (prompt {prompt_id}) did not finish within "

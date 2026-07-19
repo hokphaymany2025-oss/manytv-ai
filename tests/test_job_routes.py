@@ -14,6 +14,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.api.routes import storyboard as storyboard_module
+from backend.core import storyboard_engine as storyboard_engine_module
 from backend.core.artifacts import _artifact_from_path
 from backend.core.config import Settings
 from backend.core.events import EventBus
@@ -29,6 +30,13 @@ def _store(tmp_path) -> JobStore:
 def _patch_store_and_worker(monkeypatch, store: JobStore):
     monkeypatch.setattr(storyboard_module, "get_job_store", lambda: store)
     monkeypatch.setattr(storyboard_module.worker, "resubmit", AsyncMock())
+    # cancel_job (for a RUNNING/RESUMING storyboard job) calls
+    # request_shot_interrupt(), which lives in storyboard_engine.py and
+    # resolves its own get_job_store() name -- a separate module-level
+    # binding the patch above doesn't affect (see TODO.md's v1.2 Phase 3
+    # note on this exact class of gap). Without this, cancel-related tests
+    # here would silently read the real global JobStore as a side effect.
+    monkeypatch.setattr(storyboard_engine_module, "get_job_store", lambda: store)
 
 
 # ---- create_storyboard ----

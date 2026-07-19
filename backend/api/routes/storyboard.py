@@ -29,7 +29,7 @@ from backend.api.sse import _all_jobs_events_stream, _job_events_stream, _job_lo
 from backend.core.config import get_settings
 from backend.core.events import get_event_bus
 from backend.core.job_store import get_job_store
-from backend.core.storyboard_engine import _naive_shot_split
+from backend.core.storyboard_engine import _naive_shot_split, request_shot_interrupt
 from backend.core.worker import Job, JobStatus, LogLevel, LogStage, ShotStatus, worker
 from backend.models.schemas import (
     JobAttemptEntry,
@@ -222,6 +222,8 @@ async def cancel_job(job_id: str) -> JobStatusResponse:
                 detail="generate_script jobs cannot be cancelled once running (no per-chunk checkpoint) -- only while queued.",
             )
         await store.update_job_status(job_id, JobStatus.CANCELLING.value)
+        if job_row["kind"] == "storyboard":
+            await request_shot_interrupt(job_id)
     else:  # DONE, FAILED
         raise HTTPException(status_code=409, detail=f"Job is '{status}'; nothing to cancel.")
 
