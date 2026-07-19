@@ -1,10 +1,53 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 6) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 7) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 7) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing from the "PR troubleshooting" session immediately below. Re-checked the PRs API one more time before writing this entry — still `[]`, no change. No application logic touched.
+
+- **Branch:** `feature/v1.2-development`, up to date with `origin/feature/v1.2-development` (0 ahead/behind) — `ecf6199` confirmed pushed.
+- **Working tree:** only `SESSION_STATE.md` modified (this entry). Nothing else uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning — matches.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **The PR to `master` still hasn't been created** — three checks across two sessions, still `[]`. User was given a simplified link and the repo-homepage-banner fallback last turn; outcome not yet reported back.
+- Once a PR exists and its CI run is confirmed, still open: the `ci.yml` `push:`-trigger decision for this branch.
+- v1.2 Phases 1-3 remain fully closed; Phase 4 still explicitly gated on revisiting BUG-3's scope decision.
+
+**Exact next task:** Hear back on whether the simplified link or the repo-homepage banner worked; if still stuck, troubleshoot further (browser console errors, screenshot, or manually walking through the GitHub UI) rather than retrying the same link again. Once a PR exists, check its CI run.
+
+---
+
+### 2026-07-19 (PR troubleshooting) — Pushed pending commit; PR-creation link still not resulting in a real PR
+
+**What was completed:** Continued from "checkpoint, 6." Pushed the one pending local commit (`ecf6199`, doc-only session-state entry) to `origin/feature/v1.2-development` — no code to implement this round, matching the last several `/implement` passes (nothing left in v1.2's roadmap except operational git/GitHub housekeeping and the explicitly-gated Phase 4).
+
+**The real open problem:** the pre-filled PR link (`compare/master...feature/v1.2-development?quick_pull=1&...`) handed to the user across the last two sessions has been attempted at least twice (per the user's own messages: "opening the pending PR link", "check CI run") but has not resulted in an actual PR — confirmed repeatedly via the unauthenticated GitHub Actions/PRs REST API: `pulls?state=all` returns `[]`, and `actions/runs` still shows only 7 total runs, all on `master`, the latest (`#6`) unchanged since before this branch existed. Checked the repo's own settings this session for anything that could structurally block it: `private: false`, `archived: false`, `disabled: false`, `default_branch: master` — nothing wrong there, so the link itself should work.
+
+**Action taken:** rather than repeat the identical link a third time, gave the user two alternatives — a simplified link without the long pre-filled `title`/`body` query params (`.../compare/master...feature/v1.2-development?quick_pull=1`), and the fallback of visiting the repo's main page directly, where GitHub normally auto-shows a "Compare & pull request" banner for a branch ahead of the default — sidesteps whatever's going wrong with the constructed URL entirely.
+
+**Files changed:** `SESSION_STATE.md` only (this entry). No application code touched, no `TODO.md` change needed (nothing new to record there beyond what's already tracked as the open PR-creation item).
+
+**Remaining problems / blockers:**
+- **PR still not created** — this is now the single blocking item preventing this branch from ever having a real CI run. Root cause of why the link isn't resulting in a PR is still unconfirmed (could be the link not loading, the "Create pull request" button not being clicked, or something browser-side) — worth the user trying the simplified link or the repo-homepage-banner approach next, and reporting back what actually happens (error message, blank page, etc.) if it still doesn't work, rather than retrying blindly again.
+- Once a PR does exist and its CI run is confirmed, still open: the `push:` trigger decision for `ci.yml`, named but not decided.
+- v1.2 Phases 1-3 remain fully closed; Phase 4 still explicitly gated on revisiting BUG-3's scope decision.
+
+**Exact next task:** User tries the simplified link or the repo-homepage banner, reports what happens. Once a PR genuinely exists (verified via the API, not just assumed), check its CI run.
+
+---
 
 ### 2026-07-19 (checkpoint, 6) — State verification only, no code changes
 
