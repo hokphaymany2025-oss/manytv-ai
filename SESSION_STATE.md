@@ -1,10 +1,33 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint — state verification only, no code changes). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 3) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 3) — State verification only, no code changes
+
+**What was completed:** Ran `/analyze`, then `/next_tasks`, then `/implement`, then `/checkpoint` in sequence, purely as read-only/verification passes — no application logic touched at any point.
+
+- **Branch:** `feature/v1.2-development`, 2 commits ahead of `origin/feature/v1.2-development` (`f37112f` backend coverage, `de05ca4` frontend coverage tooling) — still unpushed.
+- **Working tree:** `README.md` modified (the architecture-tree refresh named as an open optional item in every recent entry — reviewed via `git diff` this session and confirmed **complete and accurate**: architecture tree, endpoint table, CORS section, and Frontend section all now match the current file layout and test counts), plus the untracked `.claude/` directory (local tooling config, not part of this work, left alone as in every prior checkpoint). Nothing unexpected found.
+- **`/implement` was invoked** for the next recommended task (commit + push the README refresh), but since that task is pure git housekeeping with no code to implement, and `/implement`'s convention is to leave commits to `/commit`, this was flagged to the user directly via `AskUserQuestion` rather than silently proceeding. User chose to stop and defer to `/commit`. **Nothing was committed or pushed this session.**
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning (`StarletteDeprecationWarning` re: `httpx`/`starlette.testclient`) — matches prior sessions exactly.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`), unrelated to any uncommitted change.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Remaining problems / blockers:** None new. Same as every recent entry:
+- The README refresh and the two backend/frontend coverage commits are all ready but **not yet committed/pushed** — waiting on explicit user approval via `/commit`, not automatic.
+- Neither coverage report is wired into CI (named optional, not blocking).
+- Phase 4 not started, gated on revisiting BUG-3's localhost-only scope decision.
+
+**Exact next task:** Run `/commit` to commit the README refresh (and confirm the two pending coverage commits) on `feature/v1.2-development`, then push all three to `origin` and confirm CI passes.
+
+---
 
 ### 2026-07-19 (checkpoint, 2) — State verification only, no code changes
 

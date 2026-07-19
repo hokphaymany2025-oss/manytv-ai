@@ -22,20 +22,35 @@ request), so both job types are serialized through one worker queue — see
 ```
 ManyTV/
 ├── backend/
-│   ├── app.py                  # FastAPI entrypoint
+│   ├── app.py                    # FastAPI entrypoint (lifespan, CORS, recovery)
 │   ├── core/
-│   │   ├── config.py           # env-driven Settings
-│   │   ├── comfyui_client.py   # HTTP + WebSocket client for ComfyUI
-│   │   ├── worker.py           # single-slot job queue (max 1 concurrent job)
-│   │   └── gpu_memory.py       # best-effort backend-process VRAM cleanup
-│   ├── api/routes/
-│   │   ├── generate_script.py  # POST /api/generate-script
-│   │   └── storyboard.py       # POST /api/storyboard, GET /api/jobs/{id}
-│   ├── models/schemas.py       # Pydantic request/response models
-│   └── workflows/              # ComfyUI workflow JSON (API format) goes here
-├── scripts/run_comfyui.ps1     # launches ComfyUI with the right VRAM flags
-├── output/                     # downloaded generation results, per job/shot
-├── requirements.txt
+│   │   ├── config.py             # env-driven Settings
+│   │   ├── comfyui_client.py     # HTTP + WebSocket client for ComfyUI
+│   │   ├── llm_client.py         # OpenAI-compat client for Ollama (script generation)
+│   │   ├── worker.py             # single-slot job queue (max 1 concurrent job)
+│   │   ├── job_store.py          # SQLite persistence (jobs, shots, job_logs, job_attempts)
+│   │   ├── events.py             # in-memory SSE pub/sub (EventBus)
+│   │   ├── recovery.py           # startup reconciliation after a crash
+│   │   ├── storyboard_engine.py  # shot-splitting, workflow templating, job execution
+│   │   ├── artifacts.py          # output-file metadata (size, content-type)
+│   │   └── gpu_memory.py         # best-effort backend-process VRAM cleanup
+│   ├── api/
+│   │   ├── routes/
+│   │   │   ├── generate_script.py  # POST /api/generate-script
+│   │   │   └── storyboard.py       # storyboard + job routes (see Endpoints below)
+│   │   ├── job_responses.py      # shared job-status response builder
+│   │   └── sse.py                # SSE stream generators
+│   ├── models/schemas.py         # Pydantic request/response models
+│   └── workflows/                # ComfyUI workflow JSON (API format) goes here
+├── frontend/                     # React + Vite + TS job dashboard (see "Frontend" below)
+├── tests/                        # pytest (backend), 164 cases
+├── scripts/run_comfyui.ps1       # launches ComfyUI with the right VRAM flags
+├── output/                       # downloaded generation results, per job/shot
+├── requirements.txt              # backend deps (unpinned floors)
+├── requirements.lock.txt         # exact pinned versions (pip freeze), for reproducible installs
+├── requirements-gpu.txt          # optional Intel Arc/XPU torch stack
+├── pytest.ini                    # pythonpath = . (so bare `pytest` works from repo root)
+├── .coveragerc                   # pytest-cov config (source = backend)
 └── .env.example
 ```
 
@@ -191,12 +206,13 @@ history) — the security boundary is entirely "nothing but this machine can
 reach the socket," enforced by `uvicorn`'s default `127.0.0.1` bind (see
 "Running" above). `CORS_ALLOWED_ORIGINS` (`.env`) is empty by default, so no
 page open in a browser on this machine can make the API honor a
-cross-origin request either — that only matters once a frontend exists;
-set it to that frontend's origin(s) at that point (e.g.
-`http://127.0.0.1:5173` for a local Vite dev server). If this backend is
-ever meant to be reachable from another machine, both of these defaults
-need revisiting alongside adding a real auth layer — don't just widen the
-CORS list or rebind the host in isolation.
+cross-origin request either, unless explicitly allowed — this repo's own
+`.env` already includes the frontend dev server's origin
+(`http://127.0.0.1:5173,http://localhost:5173`, see "Frontend" below); add
+your own frontend's origin(s) the same way if it runs elsewhere. If this
+backend is ever meant to be reachable from another machine, both of these
+defaults need revisiting alongside adding a real auth layer — don't just
+widen the CORS list or rebind the host in isolation.
 
 ## Endpoints
 
@@ -204,11 +220,19 @@ CORS list or rebind the host in isolation.
 |--------|-----------------------|-------|
 | POST   | `/api/generate-script`| Queues a script-generation job on the single-slot worker (`backend/core/llm_client.py`, defaults to local Ollama), returns a `job_id` — see "LLM setup" below |
 | POST   | `/api/storyboard`     | Splits script into shots (or accepts explicit `shots`), queues one ComfyUI job per shot via the single-slot worker, returns a `job_id` |
+| GET    | `/api/jobs`           | Full job history, newest first; optional `?status=` comma-separated filter |
 | GET    | `/api/jobs/{job_id}`  | Poll job status/result/error — result is `{"script": "..."}` for generate-script jobs, `{"shots": [...]}` for storyboard jobs |
+| GET    | `/api/jobs/{job_id}/logs` | Curated execution log (lifecycle events, warnings, errors); persists across retries |
+| GET    | `/api/jobs/{job_id}/attempts` | Prior attempts' status/error/timestamps, archived each time the job is retried |
 | POST   | `/api/jobs/{job_id}/retry` | Re-runs a `failed` or `cancelled` job from its last successful shot (only shots not already `done` re-run); 409 if the job never started (nothing to resume) or isn't in a retryable state |
 | POST   | `/api/jobs/{job_id}/cancel` | Cancels a `queued` job immediately, or signals a `running`/`resuming` storyboard job to stop between shots (not mid-generation — see `TODO.md`); a running `generate_script` job can't be cancelled, only a queued one |
 | GET    | `/api/jobs/{job_id}/files/{shot_index}/{filename}` | Downloads a finished shot's output file |
+| GET    | `/api/jobs/events` | SSE: signal-only stream — fires whenever any job changes, so the client re-fetches `GET /api/jobs` with its current filter |
+| GET    | `/api/jobs/{job_id}/events` | SSE: pushes a full job-status snapshot whenever this job changes |
+| GET    | `/api/jobs/{job_id}/logs/events` | SSE: pushes new log entries only (delta), supports `Last-Event-ID` reconnect |
 | GET    | `/health`             | Liveness check |
+
+All `GET /api/jobs*` data is also available via one-shot polling (the SSE routes above are what the frontend actually uses instead of polling — see "Frontend" below).
 
 ## LLM setup (for `/api/generate-script`)
 
@@ -246,9 +270,11 @@ instruct model and point `LLM_MODEL` at it.
 
 ## Frontend
 
-`frontend/` — React + Vite + TypeScript, a minimal job dashboard: submit a
-script/storyboard job, watch a live-polling list of jobs with per-shot
-status, download finished files, retry/cancel from the same view.
+`frontend/` — React 19 + Vite + TypeScript, a job dashboard: submit a
+script/storyboard job, watch job status update live (no polling — three
+`EventSource`-backed hooks subscribe to the SSE routes above, each with a
+REST-based manual-refresh fallback), download finished files, retry/cancel,
+and drill into a per-job detail page.
 
 ```powershell
 cd frontend
@@ -261,11 +287,20 @@ server's origin — `http://127.0.0.1:5173,http://localhost:5173` covers
 Vite's default port; already set in this repo's own `.env`, add it to
 yours if starting fresh (see `.env.example`).
 
-The dashboard's job list is whatever this browser has submitted
-(`localStorage`), not a full server-side history — there's no list-jobs
-endpoint (deliberately out of scope, see `TODO.md`). `frontend/.env.example`
-documents `VITE_API_BASE_URL` if the backend isn't at the default
-`http://127.0.0.1:8000`.
+The job list is real server-side history via `GET /api/jobs` (with a
+status filter), not a per-browser `localStorage` list — any browser hitting
+the same backend sees the same jobs. Routing (`react-router-dom`): `/` is
+the dashboard, `/jobs/:id` is a detail page showing a chronological
+timeline, the curated execution log, prior retry/cancel attempts, and
+inline `<video>`/`<img>` previews for finished output files.
+`frontend/.env.example` documents `VITE_API_BASE_URL` if the backend isn't
+at the default `http://127.0.0.1:8000`.
+
+**Tests:** `npm run test` (58 cases, `vitest`) — pure logic (`formatTime`,
+`formatBytes`, timeline/artifact classification) is unit-tested directly;
+a handful of data-bearing components are rendered via
+`@testing-library/react`. `npm run test -- --coverage` reports coverage
+(`@vitest/coverage-v8`, opt-in — not part of the default test run).
 
 ## Known gaps / next steps
 
@@ -273,6 +308,11 @@ See `TODO.md` for the full, current, prioritized list (bugs, missing
 features, recommended order) — it's kept up to date every session and is
 the authoritative source; this section is just a short pointer so it can't
 drift out of sync the way it did before. In brief as of this writing: job
-persistence/resume-after-crash, CORS/network-exposure hardening, CI, job
-retry/cancellation, and a first frontend are all done; a list-jobs endpoint
-and extended worker test coverage are the next likely candidates.
+persistence/resume-after-crash, CORS/network-exposure hardening, CI (backend
++ frontend), retry/cancel (including a shown attempt history), a full
+frontend with real routing and SSE-driven live updates, and test coverage
+measurement on both sides are all done. Remaining open items are either
+explicitly deferred/optional (wiring either coverage report into CI) or
+gated on revisiting the current localhost-only, single-user deployment
+scope before any deeper capability work (remote `/interrupt` support,
+mid-run script-gen cancellation, a real retention policy) is designed.
