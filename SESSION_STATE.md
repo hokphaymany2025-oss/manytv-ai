@@ -1,10 +1,45 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 7) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (v1.2 merged to master) — PR #1 merged, ci.yml's push trigger left as-is. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (v1.2 merged to master) — PR #1 merged; ci.yml's push trigger left unchanged
+
+**What was completed:** Two decisions surfaced to the user (via `AskUserQuestion`, since both affect shared/default-branch state): (1) merge PR #1 now, since v1.2's roadmap is fully closed and CI-verified — **approved**; (2) widen `ci.yml`'s `push:` trigger to also fire on feature branches — **declined**, master-only triggers plus a PR-for-CI-and-review pattern is the deliberate, kept convention; no workflow change made.
+
+Merged via local git rather than GitHub's merge button, since no `gh` CLI or GitHub token is available in this environment to call the merge API directly: confirmed `master` was a clean ancestor of `feature/v1.2-development` (`git merge-base --is-ancestor master feature/v1.2-development` — true, so a fast-forward), committed this session's pending doc updates on the feature branch first, pushed the feature branch, then fast-forwarded `master` to the feature branch's tip and pushed `master`. GitHub auto-detects this (the PR's exact commits now present in `master`'s history) and marks PR #1 as merged without needing the API.
+
+**Files changed:** `SESSION_STATE.md`, `TODO.md` (this entry + the merge/trigger decisions recorded). No application code touched.
+
+**Remaining problems / blockers:** None blocking.
+- v1.2 is now fully on `master` — the entire `feature/v1.2-development` branch's work (14+ commits) has landed on the default branch, CI-verified.
+- Phase 4 remains the only substantive item left, still explicitly gated on the user revisiting BUG-3's localhost-only scope decision before any design work begins.
+- Whether to delete the now-merged `feature/v1.2-development` branch, or keep it around, wasn't asked — left alone, not assumed.
+
+**Exact next task:** None scheduled. The natural next conversation, whenever the user is ready, is whether to open Phase 4 (real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation, retention policy, any multi-user/remote-access question) — not to be started without that explicit conversation first.
+
+---
+
+### 2026-07-19 (CI-gap resolved) — PR #1 opened, first real CI run on this branch confirmed green
+
+**What was completed:** Resolves the CI-trigger gap first found earlier today and chased across several `/checkpoint`/`/commit` cycles. The user opened **PR #1** ("Feature/v1.2 development", `feature/v1.2-development` → `master`, https://github.com/hokphaymany2025-oss/manytv-ai/pull/1) — confirmed via the GitHub Pulls API (previously `[]` on every prior check this session, now shows one open PR, head sha `ecf6199`, opened `2026-07-19T12:07:19Z`).
+
+**Verified the resulting CI run directly, not just its pass/fail status:** run `29686401582` (`pull_request` event, head `ecf6199`) — `status: completed`, `conclusion: success`. Checked both jobs' step-by-step results via the Actions Jobs API: `frontend` job's `npm run test -- --coverage` step succeeded (along with `npm ci`/`build`/`lint`), `backend` job's `python -m pytest --cov=backend --cov-report=term-missing tests/ -v` step succeeded. **This is the first real GitHub Actions execution this branch has ever had** — every prior "CI confirmed green" claim across the entire v1.2 effort (14+ commits) was a local run only, per the gap found earlier this session. The coverage-reporting steps added a few sessions ago now have live confirmation, not just local verification.
+
+**Files changed:** `TODO.md` (marked the CI-trigger-gap item done, added a new open item for the still-undecided `push:`-trigger question), `SESSION_STATE.md` (this entry). No application code touched.
+
+**Remaining problems / blockers:** None blocking.
+- **PR #1 is open but not merged** — whether/when to merge it into `master` is a separate decision, not made this session.
+- **Still open:** whether to add `feature/v1.2-development` (or a wildcard) to `ci.yml`'s `push:` trigger, so future direct pushes to this branch get CI feedback without needing a new PR each time. Not yet decided.
+- v1.2 Phases 1-3 remain fully closed; Phase 4 still explicitly gated on revisiting BUG-3's scope decision.
+- One local commit (`c609842`, the last checkpoint's doc-only entry) may still be ahead of what the PR reflects if pushed after PR #1 was opened — worth reconciling in the next session (check `git status`/PR's current head sha before assuming anything).
+
+**Exact next task:** Decide whether/when to merge PR #1, and separately, whether to fix the underlying `push:`-trigger gap so this doesn't need repeating for future branches.
+
+---
 
 ### 2026-07-19 (checkpoint, 7) — State verification only, no code changes
 
