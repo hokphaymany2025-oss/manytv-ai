@@ -171,6 +171,7 @@ Recommendation: v1.2's roadmap is now fully closed except the two named, deliber
 ## Current tasks [ ]
 
 - [ ] **v1.2 development — fully closed.** All of Phases 1-3 (frontend CI job, backend dependency lockfile, `project_id` display, retry/cancel attempt history, `storyboard.py` split, backend + frontend coverage measurement, README refresh, coverage wired into CI) are done — see "Completed" above. Nothing scheduled remains except Phase 4, which is **not started** and explicitly gated on the user revisiting BUG-3's localhost-only scope decision before any design work begins.
+- [ ] **CI has never actually run on `feature/v1.2-development` (found 2026-07-19).** `.github/workflows/ci.yml` only triggers on `push`/`pull_request` to `master` — every commit on this branch (14+, the entire v1.2 effort) was only ever verified with a local run of the exact CI command, never a real GitHub Actions execution. Confirmed via the Actions REST API: 0 runs against this branch; the 7 total runs in this repo are all on `master`, the latest predating this branch's creation. A PR from this branch to `master` has been drafted (link handed to the user, not opened — no `gh`/token available in this environment) to get the first real run via the existing `pull_request` trigger. Separately worth deciding: whether to also add this branch (or a wildcard) to `ci.yml`'s `push:` trigger so future commits here get real CI feedback without needing a PR first — not yet decided.
 
 ---
 

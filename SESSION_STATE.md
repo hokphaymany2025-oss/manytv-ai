@@ -1,10 +1,54 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 4) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 5) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 5) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "CI-trigger gap found" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.2-development`, up to date with `origin/feature/v1.2-development` (0 ahead/behind) — `db8df87` confirmed actually pushed and present on `origin`.
+- **Working tree:** `SESSION_STATE.md`, `TODO.md` modified (the CI-trigger-gap finding and its recorded open item from the prior session) — nothing unexpected, matches exactly what that session left uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning — matches.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — this was a verification-only pass.
+
+**Remaining problems / blockers:** None new. Same as the prior entry:
+- **The pre-filled PR link (`feature/v1.2-development` → `master`) has not been opened yet** — this branch still has never had a real GitHub Actions run against it. Link was already handed to the user in the prior turn; opening it is a user action, not something to chase automatically.
+- This session's doc-only changes (`SESSION_STATE.md`, `TODO.md`) are ready but **not yet committed** — waiting on `/commit`.
+- v1.2 Phases 1-3 remain fully closed; Phase 4 still explicitly gated on revisiting BUG-3's scope decision.
+
+**Exact next task:** Get the PR opened (user action) and confirm its CI run is green — the first real one this branch has ever had. Separately, commit this session's + the prior session's doc updates via `/commit`.
+
+---
+
+### 2026-07-19 (CI-trigger gap found) — Pushed pending commit, discovered CI never actually runs on this branch
+
+**What was completed:** Continued from the prior "Phase 3, fully closed" session. Per `/next_tasks`'/`/implement`'s recommendation (confirmed with the user first via `AskUserQuestion`, since pushing is a shared-state action), pushed the one pending local commit (`db8df87`, "Wire coverage reporting into CI") to `origin/feature/v1.2-development`.
+
+**Real, previously-unnoticed finding while trying to "confirm CI passes" for the push:** `origin/feature/v1.2-development` had **zero** GitHub Actions runs against it, ever — not because CI failed, but because `.github/workflows/ci.yml`'s triggers are `push: branches: [master]` and `pull_request: branches: [master]` only. Confirmed via the unauthenticated Actions REST API (public repo, same read path used by the original CI-fix session): `total_count: 0` when filtered to this branch; the unfiltered list shows only 7 runs total, all on `master`, the latest (#6) for commit `b4dd5ac` — from well before `feature/v1.2-development` was created. **Every "CI confirmed green" claim across this entire v1.2 development arc (14+ commits, multiple sessions) was actually a local run of the exact CI command, never a live GitHub Actions execution** — the workflow structurally could not have fired on any of those pushes.
+
+**Action taken:** confirmed with the user (via `AskUserQuestion`) how to get a real run — chose to open a PR from `feature/v1.2-development` to `master`, which the existing `pull_request` trigger already listens for (no workflow changes needed). No `gh` CLI or GitHub token is available in this environment, so the PR itself could not be created programmatically — instead, drafted the title/summary/test-plan and built a pre-filled GitHub compare-with-quick_pull URL for the user to open manually:
+`https://github.com/hokphaymany2025-oss/manytv-ai/compare/master...feature/v1.2-development?quick_pull=1&title=...&body=...` (full URL given to the user directly in-conversation).
+
+**Files changed:** `SESSION_STATE.md`, `TODO.md` only (this entry + a new open item below). No application code touched — nothing to re-run through the test suite (unaffected, last confirmed passing this session: 164 backend / 58 frontend / clean build / clean lint).
+
+**Remaining problems / blockers:**
+- **The PR has not actually been opened yet** — the link was handed to the user, not submitted on their behalf (no write credentials available). Until it's opened, this branch's actual first real CI run still hasn't happened.
+- Once the PR is opened and CI runs, worth deciding whether to also fix the underlying gap for future work on this branch (e.g. adding `feature/v1.2-development` — or a wildcard — to `ci.yml`'s `push:` trigger) so future commits get real CI feedback without needing a PR first. Named here, not yet decided or actioned.
+- v1.2's Phases 1-3 remain fully closed otherwise; Phase 4 still explicitly gated on revisiting BUG-3's scope decision.
+
+**Exact next task:** User opens the pre-filled PR link, then confirms (or has a session confirm) that the resulting GitHub Actions run is actually green — the first real one this branch has ever had.
+
+---
 
 ### 2026-07-19 (checkpoint, 4) — State verification only, no code changes
 
