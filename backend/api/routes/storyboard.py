@@ -29,7 +29,7 @@ from backend.api.sse import _all_jobs_events_stream, _job_events_stream, _job_lo
 from backend.core.config import get_settings
 from backend.core.events import get_event_bus
 from backend.core.job_store import get_job_store
-from backend.core.storyboard_engine import _naive_shot_split
+from backend.core.storyboard_engine import _naive_shot_split, request_shot_interrupt
 from backend.core.worker import Job, JobStatus, LogLevel, LogStage, ShotStatus, worker
 from backend.models.schemas import (
     JobAttemptEntry,
@@ -213,15 +213,22 @@ async def cancel_job(job_id: str) -> JobStatusResponse:
     elif status == JobStatus.QUEUED.value:
         await store.update_job_status(job_id, JobStatus.CANCELLED.value, finished_at=time.time())
     elif status in (JobStatus.RUNNING.value, JobStatus.RESUMING.value):
-        if job_row["kind"] == "generate_script":
-            # A single `await llm_client.generate_script(...)` call has no
-            # per-chunk checkpoint to hook a cooperative check into -- only
-            # a still-QUEUED generate_script job can be cancelled.
-            raise HTTPException(
-                status_code=409,
-                detail="generate_script jobs cannot be cancelled once running (no per-chunk checkpoint) -- only while queued.",
-            )
+        # Sets CANCELLING first, unconditionally, for both kinds -- if the
+        # job is still sitting in the queue (a RESUMING row not yet
+        # re-dequeued), the worker's own dequeue-time check already
+        # finalizes a CANCELLING row to CANCELLED without ever running the
+        # handler, no further action needed. The calls below are the
+        # *immediate* path, for a job already actually executing right now:
+        # storyboard has its own per-shot cooperative check plus ComfyUI's
+        # own /interrupt (request_shot_interrupt); generate_script's single
+        # blocking LLM call has no checkpoint of its own to notice
+        # CANCELLING, so cancel_current_job() cancels its asyncio Task
+        # directly instead.
         await store.update_job_status(job_id, JobStatus.CANCELLING.value)
+        if job_row["kind"] == "storyboard":
+            await request_shot_interrupt(job_id)
+        elif job_row["kind"] == "generate_script":
+            worker.cancel_current_job(job_id)
     else:  # DONE, FAILED
         raise HTTPException(status_code=409, detail=f"Job is '{status}'; nothing to cancel.")
 

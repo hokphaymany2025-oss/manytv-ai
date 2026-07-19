@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     generation_timeout_seconds: int = 600
     max_shots_per_job: int = 50
 
+    # Age (in days) past which a terminal (done/failed/cancelled) job's DB
+    # rows and output/<job_id>/ files are pruned at backend startup (see
+    # backend/core/retention.py). 0 (default) disables pruning entirely --
+    # this is a destructive, irreversible operation, so it's opt-in rather
+    # than silently active. queued/running/resuming/cancelling jobs are
+    # never eligible regardless of age.
+    job_retention_days: int = 0
+
     # Comma-separated list of origins allowed to make cross-origin browser
     # requests (CORS). Empty by default: this deployment is a single local
     # machine with no frontend yet, so there's no legitimate cross-origin

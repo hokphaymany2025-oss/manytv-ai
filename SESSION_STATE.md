@@ -1,10 +1,253 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (post-merge cleanup, checkpoint 9) — now working directly on `master`; local feature branch deleted, remote copy still pending a user decision. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 13) — State verification only, no code changes. Confirms the "branch pushed" entry immediately below; its doc updates are staged but not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 13) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "branch pushed" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning`, up to date with `origin/feature/v1.3-planning` (0 ahead/behind) — `e4abb41` confirmed actually pushed and present on `origin`.
+- **Working tree:** `SESSION_STATE.md`, `TODO.md` modified (the "branch pushed" entry from the prior pass) — nothing unexpected, matches exactly what that session left uncommitted. No application code changed.
+- **Backend:** `python -c "from backend.app import app"` confirmed clean. Full `python -m pytest tests/ -v` re-run not repeated this pass — already confirmed **192 passed** three times this session (initial state check, after `generate_script` live-validation, after `/interrupt` live-validation), with no application code touched since.
+- **Frontend:** not re-run this pass — already confirmed **58 passed** / clean build / clean lint this same session, no frontend files touched since.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **This session's + the prior session's doc updates (`SESSION_STATE.md`, `TODO.md`) are staged but not committed** — waiting on `/commit`.
+- **`feature/v1.3-planning` still not merged to `master`** — no PR opened yet. Phase 4's engineering work and both live-validations are done and pushed; nothing technical blocks this, it's purely a scheduling decision.
+- `origin/feature/v1.2-development` deletion still an open, low-priority decision from earlier sessions.
+
+**Exact next task:** Commit this session's + the prior session's doc updates via `/commit`. Then: decide when to open a PR / merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (branch pushed) — `feature/v1.3-planning` synced to `origin`; no code changes
+
+**What was completed:** Pushed the 3 local commits that had accumulated on `feature/v1.3-planning` since it was last synced (`10e9fca` mid-run `generate_script` cancellation, `dc6cf0d` its live-validation writeup, `e4abb41` the `/interrupt` support live-validation writeup) — confirmed via `AskUserQuestion`-equivalent exchange first, since pushing is a shared-state action per this project's standing convention. `git push origin feature/v1.3-planning` → `ce7e101..e4abb41`. Branch now shows `[origin/feature/v1.3-planning]` with no ahead/behind count — fully in sync.
+
+**Files changed:** None — pure git operation, no application or doc code touched beyond this entry.
+
+**Verification:** Not re-run this pass. Backend (192 passed) and frontend (58 passed / clean build / clean lint) were already confirmed multiple times earlier this same session, with no application code changed since — re-running would add no new information, matching this project's own established convention of skipping redundant re-verification within a session.
+
+**Remaining problems / blockers:** None new.
+- **`feature/v1.3-planning` still not merged to `master`** — no PR opened yet. With Phase 4's engineering work and both live-validations done and now pushed, nothing technical blocks this; it's purely a scheduling decision.
+- `origin/feature/v1.2-development` deletion still an open, low-priority decision from earlier sessions.
+
+**Exact next task:** Decide when to open a PR / merge `feature/v1.3-planning` into `master` — following v1.2's own precedent, opening a PR would also get this branch its first real GitHub Actions run (the existing `pull_request` trigger already covers it, no `ci.yml` change needed).
+
+---
+
+### 2026-07-19 (checkpoint, 12) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "live-validation: ComfyUI /interrupt support" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning`, 2 commits ahead of `origin/feature/v1.3-planning` (`10e9fca`, `dc6cf0d` — neither pushed).
+- **Working tree:** `SESSION_STATE.md`, `TODO.md` modified (the `/interrupt` live-validation entry and its TODO updates from the prior pass) — nothing unexpected, matches exactly what that session left uncommitted. No application code changed.
+- **Backend:** `python -c "from backend.app import app"` confirmed clean. Full `python -m pytest tests/ -v` re-run not repeated this pass (already confirmed **192 passed** this session, after both ComfyUI and the backend were stopped following live-validation — nothing since has touched application code).
+- **Frontend:** not re-run this pass — already confirmed **58 passed** / clean build / clean lint this same session, no frontend files touched since.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **This session's + the prior session's doc updates (`SESSION_STATE.md`, `TODO.md`) are staged but not committed** — waiting on `/commit`.
+- **2 local commits (`10e9fca`, `dc6cf0d`) still not pushed** to `origin/feature/v1.3-planning`.
+- **Phase 4 is fully closed, engineering-wise** — both live-validation items (`/interrupt`, `generate_script` cancellation) are done. Nothing technical blocks merging this branch anymore; it's purely a scheduling decision now.
+- `origin/feature/v1.2-development` deletion still an open, low-priority decision from earlier sessions.
+
+**Exact next task:** Commit this session's + the prior session's doc updates via `/commit`. Then: decide whether to push, and separately, decide when to open a PR / merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (live-validation: ComfyUI /interrupt support) — Real mid-generation interrupt confirmed against a live Arc A750; closes out Phase 4's live-validation
+
+**What was completed:** Live-validated the `/interrupt` support feature (from an earlier session on this branch) against a real, running ComfyUI instance — the last unverified Phase 4 item, following last session's `generate_script` cancellation validation. Started ComfyUI for real (`scripts/run_comfyui.ps1 -ComfyUIPath D:\NewProjects\ComfyUI -VramHeadroomGB 2`, confirmed on the actual Arc A750/XPU) and the ManyTV backend. Startup recovery found a genuine leftover 2-shot `storyboard` job from an earlier session and resumed it, submitting shot 0 to ComfyUI — used that real in-flight generation directly rather than fabricating one.
+
+**What happened:** Cancelled the job via `POST /api/jobs/{id}/cancel` while shot 0 was mid-KSampler (step 7 of 20, confirmed via the backend's own progress logging). The backend log shows the real chain working exactly as designed: `POST http://127.0.0.1:8188/api/jobs/{prompt_id}/cancel` → `200 OK` from ComfyUI, then `Job ... cancelled` logged ~620ms after the cancel request — nowhere near waiting out the remaining ~13 steps (would have been many more seconds) or `GENERATION_TIMEOUT_SECONDS` (600s default). **Checked ComfyUI's own `/history` for the interrupted prompt directly, not just the ManyTV API**: `status_str: "error"`, `completed: false`, and a genuine `execution_interrupted` message at node 8 (`KSampler`) — the exact WS message type `wait_for_completion`'s new branch was built to catch, now seen for real rather than only in a mocked test. The job correctly ended `cancelled` (not `failed`), shot 0 correctly ended `failed` with a clear `"...was interrupted."` error message (the CANCELLING-vs-not disambiguation working as designed), and shot 1 stayed `pending` — never submitted, confirming the whole job stopped rather than just the interrupted shot. Submitted a fresh storyboard job immediately after: picked up and ran normally, completing end-to-end (~28s) with a real, valid 487KB `.mp4` — confirming the worker/storyboard_engine wasn't left in any stuck state by the interrupt path. Stopped both ComfyUI and the backend cleanly afterward.
+
+**Result:** the `/interrupt` feature (real endpoint, `execution_interrupted` handling, CANCELLING-vs-not disambiguation, and the folded-in history-completeness fix) all hold up under a real mid-generation cancel against real hardware — genuinely immediate (not waited-out) interruption, correct terminal states, no side effects on subsequent jobs. **Both Phase 4 live-validation items (this one and last session's `generate_script` cancellation) are now done — Phase 4 is fully closed engineering-wise.**
+
+**Files changed:** `SESSION_STATE.md`, `TODO.md` (this entry + marking the item validated). No application code changed — a pure verification pass, nothing needed fixing.
+
+**Verification:** `python -m pytest tests/ -v` → **192 passed** (114.70s), 1 pre-existing warning, re-confirmed after both live services were stopped. `npm run test -- --run` → **58 passed** (11 files). `npm run build` → clean. `npm run lint` → clean except the same 2 pre-existing warnings (`JobArtifacts.tsx`, `JobTimeline.tsx`, `react(only-export-components)`).
+
+**Remaining problems / blockers:** None new.
+- **This session's + the prior session's doc updates are staged but not committed** — waiting on `/commit`.
+- **2 local commits (`10e9fca`, `dc6cf0d`) still not pushed** to `origin/feature/v1.3-planning`.
+- `feature/v1.3-planning` still not merged to `master` — with both live-validations now done, nothing engineering-side blocks that decision anymore.
+- `origin/feature/v1.2-development` deletion still an open, low-priority decision from earlier sessions.
+
+**Exact next task:** Commit this session's doc updates via `/commit`. Then: decide whether to push, and separately, decide when to open a PR / merge `feature/v1.3-planning` into `master` — Phase 4's engineering work and both its live-validations are complete, so this is now purely a scheduling decision, not gated on anything technical.
+
+---
+
+### 2026-07-19 (checkpoint, 11) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "live-validation: generate_script cancellation" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning`, 1 commit ahead of `origin/feature/v1.3-planning` (`10e9fca`, still not pushed).
+- **Working tree:** `SESSION_STATE.md`, `TODO.md` modified (the live-validation entry and its TODO updates from the prior pass) — nothing unexpected, matches exactly what that session left uncommitted. No application code changed.
+- **Backend:** `python -c "from backend.app import app"` confirmed clean. Full `python -m pytest tests/ -v` re-run not repeated this pass (already confirmed **192 passed** twice this session — once at session start, once before live-validating — and nothing since has touched application code).
+- **Frontend:** not re-run this pass — no frontend files touched since the last confirmed-green run (58 passed / clean build / clean lint, from the prior Phase 4 sessions).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **This session's doc updates (`SESSION_STATE.md`, `TODO.md`) are staged but not committed** — waiting on `/commit`.
+- **`10e9fca` still not pushed** to `origin/feature/v1.3-planning`.
+- `/interrupt` support remains the one Phase 4 item without live validation — needs a real ComfyUI session, not attempted yet.
+- `feature/v1.3-planning` still not merged to `master`; `origin/feature/v1.2-development` deletion still an open, low-priority decision.
+
+**Exact next task:** Commit this session's + the prior session's doc updates via `/commit`, then decide whether to push `10e9fca`. Independently: live-validate `/interrupt` support against a real ComfyUI instance, or decide when to merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (live-validation: generate_script cancellation) — Real mid-run cancellation confirmed against a real Ollama call; no code changes needed
+
+**What was completed:** Live-validated the previous session's mid-run `generate_script` cancellation feature (`10e9fca`, still uncommitted-to-push at the start of this pass) — the one Phase 4 item that had only ever been exercised through mocks. Per `/next_tasks`'s own recommendation: Ollama was already running on this machine, ComfyUI wasn't, so this was the immediately actionable one of the two remaining live-validation items (the `/interrupt` support still needs a real ComfyUI session).
+
+**What happened:** Started the real backend (`uvicorn backend.app:app --port 8000`). Startup recovery found a genuine leftover `generate_script` job (`d01b794e...`) mid-flight from an earlier, uncleanly-stopped session and resumed it — used that real in-flight job directly rather than submitting a fresh one. Cancelled it via `POST /api/jobs/{id}/cancel`: the request returned in ~100ms with `cancelling`, and the backend log shows the job reaching its terminal `cancelled` state at the **same timestamp** as the cancel request (`22:27:09,099` for both the "cancel requested" and "cancelled" log lines) — the LLM call was genuinely aborted mid-flight at the asyncio level, not waited out to completion or timeout. Confirmed the worker loop itself wasn't left in the deadlocked state the earlier session's real bug had produced: submitted a second, fresh `generate_script` job immediately after — it was picked up and started running right away (no stuck queue), and completed normally end-to-end ~35s later with a real, coherent generated script in its `result.script`. Stopped the backend cleanly afterward (`taskkill`, confirmed `/health` no longer responds).
+
+**Result:** the fix from the previous session's real deadlock (explicit `_cancel_requested_for` intent flag instead of inferring from `task.cancelled()`) holds up under a real cancel against a real in-flight Ollama call — instant cancellation, correct terminal status, no worker-loop deadlock, normal processing of subsequent jobs.
+
+**Not yet done:** `/interrupt` support (Phase 4's other unvalidated item) still needs a real ComfyUI session — not started this pass, ComfyUI wasn't running.
+
+**Files changed:** `SESSION_STATE.md` only (this entry). No application code changed — this was a verification pass, and nothing needed fixing.
+
+**Verification:** `python -m pytest tests/ -v` → **192 passed** (re-confirmed at the start of this session, before any live testing; unaffected by a pure verification pass, not re-run again after). Frontend suite not re-run — no frontend code touched, nothing this pass could have affected there.
+
+**Remaining problems / blockers:** None new.
+- **`10e9fca` still not pushed** to `origin/feature/v1.3-planning` — this pass didn't touch git state, waiting on the same approval named in the prior entry.
+- `/interrupt` support remains the one Phase 4 item without live validation — needs a real ComfyUI session (`scripts/run_comfyui.ps1`), not attempted this pass.
+- `feature/v1.3-planning` still not merged to `master`; `origin/feature/v1.2-development` deletion still an open, low-priority decision.
+
+**Exact next task:** Live-validate `/interrupt` support against a real ComfyUI instance (start it via `scripts/run_comfyui.ps1`, submit a storyboard job, cancel mid-shot, confirm it aborts in seconds rather than waiting for `GENERATION_TIMEOUT_SECONDS`). Independently: push `10e9fca`, and decide when to merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (Phase 4: mid-run generate_script cancellation) — Last Phase 4 engineering item implemented; a real deadlock caught and fixed along the way
+
+**What was completed:** Third and last Phase 4 engineering item, following retention and `/interrupt` support. User asked for a fresh design pass first (worker.py's lifecycle, job status transitions), then approved implementing it directly.
+
+**Design:** `generate_script`'s handler is one blocking `await self._client.chat.completions.create(...)` call with no internal checkpoint — the only way to actually stop it mid-flight is asyncio-level task cancellation, not a cooperative flag check. This required restructuring `SingleSlotWorker._run()`: the handler call now runs as its own wrapped `asyncio.Task` rather than a bare `await`, so a specific job's execution can be cancelled independently of the worker's own outer loop task. New public `cancel_current_job(job_id) -> bool`.
+
+**A real bug found and fixed during implementation, not caught by reasoning alone:** the first version disambiguated "this job's task was cancelled" from "the worker's own outer task was cancelled (`worker.stop()`)" by checking `task.cancelled()` after catching `CancelledError`. This **completely hung `worker.stop()`** — a genuine deadlock, discovered when a test timed out rather than passing or failing cleanly. Root cause: `asyncio.Task.cancel()` automatically propagates to whatever a task is currently suspended on (its `_fut_waiter`) — since `_run()` awaits the inner per-job task directly, cancelling the *outer* task also cancels the *inner* one as an automatic side effect of asyncio's own cancellation machinery, making both scenarios produce an identical `task.cancelled() == True`. There was no way to distinguish them from the task's own state alone. Fixed by tracking explicit intent instead: a new `self._cancel_requested_for: Optional[str]` flag, set by `cancel_current_job()` immediately before it calls `.cancel()`, checked in `_run()`'s except block rather than inferred from ambiguous task state.
+
+**Implementation:**
+- `backend/core/worker.py`: `_current_job`/`_current_job_task`/`_cancel_requested_for` tracked on the instance; `_run()`'s try/except restructured around the wrapped task; new `cancel_current_job(job_id)`.
+- `backend/api/routes/storyboard.py`: `cancel_job`'s old unconditional 409 for a running `generate_script` job replaced with the same CANCELLING-first structure `storyboard` jobs already use (mirrors `request_shot_interrupt`).
+- `README.md`'s endpoint table updated — both halves of the old "storyboard not mid-generation" / "generate_script can't be cancelled" claim were stale after this and the `/interrupt` work.
+- Tests: `tests/test_worker.py` — the old `test_asyncio_cancelled_error_still_propagates` no longer modeled the new architecture correctly (a handler directly raising `CancelledError` is now indistinguishable from a legitimate targeted cancel, since the handler runs in its own task either way) — replaced with a test that actually cancels the *outer* task while a long-running handler is mid-flight, confirming both that cancellation genuinely propagates and that the inner task gets cancelled too. Plus 3 new `cancel_current_job` cases. `tests/test_job_routes.py`: the old `..._is_rejected` test replaced with `..._sets_cancelling`, plus a new test confirming `cancel_current_job` is actually called with the right job id.
+
+**Verification:** `python -c "from backend.app import app"` clean. `python -m pytest tests/ -v` → **192 passed** (188 prior + 4 net new). `npm run test`/`build`/`lint` unaffected, re-confirmed green.
+
+**Files changed:** `backend/core/worker.py`, `backend/api/routes/storyboard.py`, `README.md`, `tests/test_worker.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md`. No frontend files.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention.
+- **All three Phase 4 engineering items are now done** (retention, `/interrupt`, generate_script cancellation) — none live-validated against real ComfyUI/Ollama instances yet; matching this project's established practice, that's the natural follow-up, not a blocker to calling the code itself done.
+- **Anything multi-user/remote-access** remains explicitly gated on revisiting BUG-3's scope decision — untouched.
+- `feature/v1.3-planning` not yet merged to `master`; `origin/feature/v1.2-development` (old, fully-merged branch) still exists, deletion still an open low-priority decision from an earlier session.
+
+**Exact next task:** Get approval to commit this session's changes, then push. Independently: live-validate both new cancellation paths against real ComfyUI/Ollama, or decide when to merge `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-19 (Phase 4: real ComfyUI /interrupt support) — Immediate mid-generation cancellation implemented on `feature/v1.3-planning`
+
+**What was completed:** Second Phase 4 item, following the retention policy. User first asked for an analysis-only pass ("study worker.py, comfyui_client.py, job status transitions; design first; do not modify code") — read `worker.py`, `comfyui_client.py`, `storyboard_engine.py`, `storyboard.py`'s `cancel_job` route, and (critically) **the actual installed ComfyUI source at `D:\NewProjects\ComfyUI`** (`server.py`, `execution.py`, `comfy_execution/jobs.py`), not general docs — matching this project's own established standard from BUG-1's investigation.
+
+**Real findings from that verification, not assumed:**
+- The right endpoint is `POST /api/jobs/{prompt_id}/cancel` (atomic, `interrupt_if_running` under ComfyUI's own queue mutex) — not the legacy global `POST /interrupt`, whose own prompt_id check isn't atomic with the interrupt itself.
+- An interrupted prompt sends a distinct `execution_interrupted` WS message, which `wait_for_completion` had no handling for at all — it fell through to the terminal "executing, node=None" event (confirmed to fire unconditionally regardless of success/failure/interrupt) and returned whatever `/history` held as a false success.
+- ComfyUI's `/history` status doesn't distinguish "interrupted" from "genuinely failed" (`completed: False` either way) — and this exact ambiguity was **already a latent, pre-existing gap** in the WS-drop polling fallback (BUG-1's path) and the SUBMITTED-shot resume-reconciliation branch, neither of which checked `status.completed` before. Confirmed via `AskUserQuestion` to fold this fix into the same change (recommended: leaving it unfixed would make the new interrupt feature silently misbehave under a WS-drop).
+
+**Design, approved via a second `AskUserQuestion`** (folding in the history-completeness fix): job-level cancellation intent is disambiguated by re-checking the job's own persisted `CANCELLING` status at the moment an interrupt exception is caught, not by exception type alone — correct even in the edge case of a real workflow bug coinciding with a cancel request, and correct for the case of something *external* to ManyTV interrupting a prompt (e.g. ComfyUI's own UI stop button), which should still end the job `FAILED`, not silently `CANCELLED`.
+
+**Implementation:**
+- `backend/core/comfyui_client.py`: new `ComfyUIInterrupted(ComfyUIError)`; new `cancel_prompt(prompt_id) -> bool`; `wait_for_completion` gains an `execution_interrupted` branch; new `_raise_if_history_incomplete(history, prompt_id)` wired into `_poll_history_until_done` and the resume-reconciliation branch only (not `get_history()`/the WS success path directly — provably unreachable there once `execution_interrupted` is handled, and baking it into `get_history()` itself would have broken `_poll_history_until_done`'s existing "any ComfyUIError = keep polling" retry loop).
+- `backend/core/storyboard_engine.py`: new `request_shot_interrupt(job_id)` (best-effort, swallows ComfyUI-unreachable errors); new `except ComfyUIInterrupted` branch in `_run_storyboard_job` before the generic `except Exception`, implementing the CANCELLING-vs-not disambiguation above; the resume-reconciliation branch now treats a found-but-incomplete history the same as "not found" (resubmit) — required a small but real fix: validating completeness *before* assigning to the outer `history` variable, since a bare re-check after the fact would have left `history` non-`None` on the exception path and silently skipped resubmission.
+- `backend/api/routes/storyboard.py`: `cancel_job` calls `request_shot_interrupt` after setting `CANCELLING`, for `kind == "storyboard"` only — one narrow import, matching the Phase 3 refactor's discipline of not reintroducing `ComfyUIClient`/`Settings` into the routes file.
+- **Real test-isolation bug found and fixed while writing tests**: `tests/test_job_routes.py`'s existing cancel tests were silently reaching the *real* global `JobStore` via `request_shot_interrupt`'s own `get_job_store()` module-level binding — the exact class of gap the Phase 3 refactor's own notes already named (a patched name in one module doesn't affect the same name bound in another). Fixed by also patching `storyboard_engine_module.get_job_store` in that file's shared `_patch_store_and_worker` helper.
+- New `tests/test_cancellation.py` (16 cases) covering all three layers: `comfyui_client.py` (`cancel_prompt` success/no-op/unreachable, `execution_interrupted` → `ComfyUIInterrupted`, `_raise_if_history_incomplete` via `_poll_history_until_done` for absent-status/complete/incomplete histories), `storyboard_engine.py` (`request_shot_interrupt`'s three cases; `_run_storyboard_job`'s CANCELLING-vs-not branches — the CANCELLING case built by flipping the job's status *during* the mocked `wait_for_completion` call, to genuinely simulate the real race rather than short-circuiting on the shot loop's pre-existing top-of-iteration check; the resume-reconciliation resubmit-on-incomplete-history case), and the `cancel_job` route.
+
+**Verification:** `python -c "from backend.app import app"` confirmed clean. `python -m pytest tests/ -v` → **188 passed** (172 prior + 16 new). `npm run test`/`build`/`lint` unaffected (backend-only change), re-confirmed green.
+
+**Files changed:** `backend/core/comfyui_client.py`, `backend/core/storyboard_engine.py`, `backend/api/routes/storyboard.py`, `tests/test_job_routes.py`, `tests/test_cancellation.py` (new), `TODO.md`, `SESSION_STATE.md`. No frontend files.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention (`/implement` doesn't commit).
+- **Not live-validated against a real running ComfyUI** — needs a real mid-generation cancel to confirm the shot actually aborts in seconds rather than waiting for `GENERATION_TIMEOUT_SECONDS`. Matching this project's established practice (see BUG-1's history), this is the natural follow-up, not a blocker to calling the code itself done.
+- Phase 4's last remaining engineering item (mid-run `generate_script` cancellation) is still open, independent of everything above.
+- Multi-user/remote-access work remains explicitly gated on revisiting BUG-3's scope decision — untouched.
+- `feature/v1.3-planning` is pushed (`64cdf90`) but this session's new commit isn't yet; `origin/feature/v1.2-development` (old, fully-merged branch) still exists, deletion still an open low-priority decision from an earlier session.
+
+**Exact next task:** Get approval to commit this session's `/interrupt`-support changes on `feature/v1.3-planning`, then push. Independently: live-validate against a real ComfyUI instance, or pick up mid-run `generate_script` cancellation next.
+
+---
+
+### 2026-07-19 (checkpoint, 10) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing from "Phase 4 kickoff: retention policy" immediately below. Found the retention-policy changes already committed (`85495bd`, "Add job retention policy") — committed out-of-band since the last turn, not via this conversation's own `/commit`. No application logic touched this session.
+
+- **Branch:** `feature/v1.3-planning`, tip `85495bd`. **No upstream tracking** (`git branch -vv` shows no `[origin/...]`) — this branch is local-only, never pushed.
+- **Working tree:** clean, nothing uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **172 passed**, 1 pre-existing warning — matches (164 prior + 8 new from the retention policy).
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — unaffected, matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **`feature/v1.3-planning` has never been pushed** — no remote copy exists at all yet, unlike every prior branch this session dealt with.
+- Phase 4's other two engineering items (real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation) remain open, either pickable independently.
+- Multi-user/remote-access work remains explicitly gated on revisiting BUG-3's scope decision.
+- `origin/feature/v1.2-development` (old, fully-merged branch) still exists on `origin` — deletion still an open, low-priority decision from an earlier session.
+
+**Exact next task:** Decide whether to push `feature/v1.3-planning`, and separately, whether to continue with another Phase 4 item (`/interrupt` support or mid-run cancellation) next.
+
+---
+
+### 2026-07-19 (Phase 4 kickoff: retention policy) — Job/log retention policy implemented on `feature/v1.3-planning`
+
+**What was completed:** First real Phase 4 work. `feature/v1.3-planning` turned out to be a branch the user had already created outside this conversation (found via `git status`/`git branch -vv` after a prior `/analyze`) — confirmed its purpose via `AskUserQuestion` before touching it: start scoping Phase 4 here. A second `AskUserQuestion` clarified that Phase 4 bundles four items, and only "multi-user/remote-access" actually requires revisiting BUG-3's no-auth/localhost-only decision — the other three (`/interrupt`, mid-run `generate_script` cancellation, retention policy) are pure engineering with no security/scope implications. User picked **retention policy** as the first item.
+
+Presented a design (files to change, reasoning, risks) before writing code, per `/implement`'s explicit "wait for approval" step, since this is inherently destructive (permanently deletes job history and generated files). A third `AskUserQuestion` resolved the one open design choice: prune **startup-only** (matching `recovery.py`'s existing pattern), not also via an on-demand endpoint.
+
+**Implementation:**
+- `backend/core/config.py`: new `job_retention_days: int = 0` (0 = disabled by default — opt-in, not silently active, matching this project's caution around destructive operations). `.env.example` documents it.
+- `backend/core/job_store.py`: new `prune_old_jobs(older_than_days)` — deletes `job_logs`/`job_attempts`/`shots`/`jobs` rows for `done`/`failed`/`cancelled` jobs older than the cutoff (never `queued`/`running`/`resuming`/`cancelling`, regardless of age); returns the pruned job ids so the caller can also remove output files (JobStore has no filesystem knowledge of its own).
+- New `backend/core/retention.py` — thin orchestrator mirroring `recovery.py`'s shape: calls `prune_old_jobs`, then `shutil.rmtree(ignore_errors=True)`s each pruned job's `output/<job_id>/` directory. No-ops if retention is disabled.
+- `backend/app.py`: wired into `lifespan`, right after `resume_incomplete_jobs` — disjoint from crash recovery by construction (recovery only touches non-terminal jobs, pruning only touches terminal ones).
+- Tests: 4 new in `tests/test_job_store.py`, 4 new in `tests/test_retention.py` (real `JobStore`/real filesystem under `tmp_path`, matching `test_recovery.py`'s convention rather than mocking).
+
+**Verification:** `python -c "from backend.app import app"` confirmed the import chain resolves cleanly. `python -m pytest tests/ -v` → **172 passed** (164 prior + 8 new). `npm run test` → 58 passed (unaffected, backend-only change). `npm run build` clean. `npm run lint` clean (2 pre-existing warnings only).
+
+**Files changed:** `backend/core/config.py`, `backend/core/job_store.py`, `backend/core/retention.py` (new), `backend/app.py`, `.env.example`, `tests/test_job_store.py`, `tests/test_retention.py` (new), `TODO.md`, `SESSION_STATE.md`. No frontend files touched.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention (`/implement` doesn't commit).
+- `feature/v1.3-planning` itself is still local-only, not pushed.
+- Phase 4's other two engineering items (real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation) remain open, either independently pickable next.
+- Multi-user/remote-access work remains explicitly gated on revisiting BUG-3's scope decision — not touched this session.
+- `origin/feature/v1.2-development` (the old, fully-merged branch) still exists on `origin` — its deletion is still an open, low-priority decision from an earlier session, unrelated to this one.
+
+**Exact next task:** Get approval to commit this session's retention-policy changes on `feature/v1.3-planning`. Once approved: push the branch, and independently pick up either of Phase 4's remaining engineering items (`/interrupt` support or mid-run cancellation) next — no dependency between them.
+
+---
 
 ### 2026-07-19 (post-merge cleanup, checkpoint 9) — Now on `master`; local feature branch deleted, remote deletion pending
 

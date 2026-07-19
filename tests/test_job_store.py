@@ -9,6 +9,7 @@ tests/test_comfyui_client.py's existing style -- no async test plugin.
 
 import asyncio
 import concurrent.futures
+import time
 
 from backend.core.config import Settings
 from backend.core.job_store import JobStore
@@ -461,3 +462,73 @@ def test_concurrent_access_does_not_raise_sqlite_interface_error(tmp_path):
         asyncio.run(scenario())
     except concurrent.futures.thread.BrokenThreadPool:
         raise AssertionError("Thread pool broke under concurrent JobStore access")
+
+
+def test_prune_old_jobs_deletes_only_old_terminal_jobs(tmp_path):
+    store = _store(tmp_path)
+    now = time.time()
+    old = now - 40 * 86400
+    recent = now - 5 * 86400
+
+    async def scenario():
+        await store.create_job("old-done", "storyboard", "done", {}, created_at=old)
+        await store.create_job("old-failed", "storyboard", "failed", {}, created_at=old)
+        await store.create_job("old-cancelled", "storyboard", "cancelled", {}, created_at=old)
+        await store.create_job("recent-done", "storyboard", "done", {}, created_at=recent)
+        return await store.prune_old_jobs(30)
+
+    pruned = asyncio.run(scenario())
+
+    assert sorted(pruned) == ["old-cancelled", "old-done", "old-failed"]
+    assert asyncio.run(store.get_job("old-done")) is None
+    assert asyncio.run(store.get_job("old-failed")) is None
+    assert asyncio.run(store.get_job("old-cancelled")) is None
+    assert asyncio.run(store.get_job("recent-done")) is not None
+
+
+def test_prune_old_jobs_never_touches_non_terminal_jobs_regardless_of_age(tmp_path):
+    store = _store(tmp_path)
+    ancient = time.time() - 365 * 86400
+
+    async def scenario():
+        await store.create_job("q1", "storyboard", "queued", {}, created_at=ancient)
+        await store.create_job("r1", "storyboard", "running", {}, created_at=ancient)
+        await store.create_job("resuming1", "storyboard", "resuming", {}, created_at=ancient)
+        await store.create_job("cancelling1", "storyboard", "cancelling", {}, created_at=ancient)
+        return await store.prune_old_jobs(30)
+
+    pruned = asyncio.run(scenario())
+
+    assert pruned == []
+    for job_id in ("q1", "r1", "resuming1", "cancelling1"):
+        assert asyncio.run(store.get_job(job_id)) is not None
+
+
+def test_prune_old_jobs_cascades_to_shots_logs_and_attempts(tmp_path):
+    store = _store(tmp_path)
+    old = time.time() - 40 * 86400
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "failed", {}, created_at=old)
+        await store.upsert_shot("job-1", 0, "done", files=["a.mp4"])
+        await store.add_job_log("job-1", "info", "job", "started")
+        await store.reset_job_for_retry("job-1", "queued")
+        await store.update_job_status("job-1", "done", finished_at=old)
+        return await store.prune_old_jobs(30)
+
+    pruned = asyncio.run(scenario())
+
+    assert pruned == ["job-1"]
+    assert asyncio.run(store.get_shots("job-1")) == []
+    assert asyncio.run(store.get_job_logs("job-1")) == []
+    assert asyncio.run(store.get_job_attempts("job-1")) == []
+
+
+def test_prune_old_jobs_returns_empty_list_when_nothing_is_eligible(tmp_path):
+    store = _store(tmp_path)
+
+    async def scenario():
+        await store.create_job("job-1", "storyboard", "done", {}, created_at=time.time())
+        return await store.prune_old_jobs(30)
+
+    assert asyncio.run(scenario()) == []

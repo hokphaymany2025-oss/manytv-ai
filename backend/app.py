@@ -19,6 +19,7 @@ from backend.core.comfyui_client import ComfyUIClient
 from backend.core.config import get_settings
 from backend.core.job_store import get_job_store
 from backend.core.recovery import resume_incomplete_jobs
+from backend.core.retention import prune_old_jobs
 from backend.core.worker import worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
         )
 
     await resume_incomplete_jobs(worker, get_job_store(), client)
+    await prune_old_jobs(settings, get_job_store())
 
     yield
 

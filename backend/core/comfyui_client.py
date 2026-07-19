@@ -24,6 +24,39 @@ class ComfyUIError(RuntimeError):
     """Raised when ComfyUI is unreachable or reports a failed execution."""
 
 
+class ComfyUIInterrupted(ComfyUIError):
+    """Raised when ComfyUI reports a prompt was interrupted (execution_interrupted),
+    as opposed to a genuine execution_error. Distinguished from a plain
+    ComfyUIError so callers can tell "someone called /interrupt (or the new
+    /api/jobs/{id}/cancel) on this prompt" apart from "this workflow actually
+    failed" -- ComfyUI's own /history entry doesn't preserve that distinction
+    (see _raise_if_history_incomplete below), only the live WS message does.
+    """
+
+
+def _raise_if_history_incomplete(history: dict[str, Any], prompt_id: str) -> None:
+    """A present /history entry can represent a real success OR a finished-
+    but-unsuccessful outcome (a genuine error or an interrupt) -- ComfyUI's
+    own history status doesn't distinguish the two (confirmed against the
+    installed ComfyUI's execution.py: PromptQueue.task_done sets
+    status_str='error'/completed=False identically for both cases). Only
+    call sites that never see the live WS message stream directly need this
+    check -- wait_for_completion's own WS loop already intercepts every real
+    failure via execution_error/execution_interrupted before ever reaching a
+    "done" return, so a present-but-incomplete history is unreachable there
+    in practice. The two call sites that do need it: _poll_history_until_done
+    (the WS-drop fallback, BUG-1) and storyboard_engine.py's SUBMITTED-shot
+    resume-after-restart reconciliation, both of which only ever see /history
+    and never the WS stream.
+    """
+    status = history.get("status")
+    if status is not None and status.get("completed") is False:
+        raise ComfyUIError(
+            f"ComfyUI prompt {prompt_id} finished without completing successfully "
+            f"(status: {status.get('status_str')}, messages: {status.get('messages')})."
+        )
+
+
 class ComfyUIClient:
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -53,6 +86,33 @@ class ComfyUIClient:
             if not prompt_id:
                 raise ComfyUIError(f"ComfyUI did not return a prompt_id: {data}")
             return prompt_id
+
+    async def cancel_prompt(self, prompt_id: str) -> bool:
+        """POST /api/jobs/{prompt_id}/cancel -- atomically interrupts this
+        prompt if it's currently executing, or dequeues it if still pending
+        in ComfyUI's own queue. Idempotent: returns False (not an error) if
+        the prompt already finished or is unknown to ComfyUI.
+
+        Verified against the actual installed ComfyUI's server.py +
+        comfy_execution/jobs.py, not assumed from general docs -- this is a
+        newer, purpose-built cancel-by-id endpoint, deliberately used instead
+        of the legacy global POST /interrupt: that endpoint's own prompt_id
+        check isn't atomic with the interrupt itself (a plain scan of the
+        currently-running list, then an unconditional global
+        nodes.interrupt_processing() call), so it can race a prompt that
+        finishes in between. This endpoint's interrupt path
+        (PromptQueue.interrupt_if_running) is signalled under the same mutex
+        that moves a job from running to done, closing that race.
+        """
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                resp = await client.post(f"{self._settings.comfyui_http_url}/api/jobs/{prompt_id}/cancel")
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ComfyUIError(f"ComfyUI rejected cancel for prompt {prompt_id}: {exc.response.text}") from exc
+            except httpx.HTTPError as exc:
+                raise ComfyUIError(f"Could not reach ComfyUI at {self._settings.comfyui_http_url}") from exc
+            return resp.json().get("cancelled", False)
 
     async def wait_for_completion(
         self,
@@ -93,6 +153,9 @@ class ComfyUIClient:
                     if message.get("type") == "execution_error":
                         raise ComfyUIError(f"ComfyUI execution error for {prompt_id}: {data}")
 
+                    if message.get("type") == "execution_interrupted":
+                        raise ComfyUIInterrupted(f"ComfyUI prompt {prompt_id} was interrupted: {data}")
+
                     # ComfyUI emits an "executing" event with node=None once
                     # the whole prompt graph has finished.
                     if message.get("type") == "executing" and data.get("node") is None:
@@ -132,9 +195,12 @@ class ComfyUIClient:
         """
         while True:
             try:
-                return await self.get_history(prompt_id)
+                history = await self.get_history(prompt_id)
             except ComfyUIError:
                 await asyncio.sleep(poll_interval_seconds)
+                continue
+            _raise_if_history_incomplete(history, prompt_id)
+            return history
 
     async def get_history(self, prompt_id: str) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30) as client:
