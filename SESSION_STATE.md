@@ -1,10 +1,36 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 8) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (post-merge cleanup, checkpoint 9) — now working directly on `master`; local feature branch deleted, remote copy still pending a user decision. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (post-merge cleanup, checkpoint 9) — Now on `master`; local feature branch deleted, remote deletion pending
+
+**What was completed:** Continued from "v1.2 merged to master." User confirmed (via `AskUserQuestion`) to do pure housekeeping only — no Phase 4 conversation started. Pushed `975bc6d` (checkpoint 8's session-state entry) to `origin/feature/v1.2-development`, then discovered it had never been fast-forwarded into `master` (master was still at `fba90fd`) — fixed by checking out `master`, fetching, and fast-forwarding again to `975bc6d`, then pushing `origin/master`. Deleted the local `feature/v1.2-development` branch (`git branch -d`, safe since fully merged). **Attempted to also delete the remote copy (`git push origin --delete feature/v1.2-development`) — blocked by the auto-mode classifier** as a harder-to-reverse shared-state action; left for the user to decide/do instead of working around it.
+
+Then ran this `/checkpoint`: confirmed the working directory is now on `master` directly (the feature branch no longer exists locally), clean, in sync with `origin/master` (tip `975bc6d`). `remotes/origin/feature/v1.2-development` still listed in `git branch -a` — the remote branch itself has not been deleted.
+
+- **Branch:** `master` (no longer `feature/v1.2-development` — that branch is gone locally), up to date with `origin/master`, tip `975bc6d`.
+- **Working tree:** clean, nothing uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **164 passed**, 1 pre-existing warning.
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files).
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass, working directly on `master` now.
+
+**Remaining problems / blockers:** None blocking.
+- **`origin/feature/v1.2-development` still exists** — deleting it was blocked by the auto-mode classifier (a harder-to-reverse shared-state action); the user hasn't yet said whether to delete it, delete it themselves, or leave it. Not urgent since it's fully merged and inert.
+- Phase 4 remains the only substantive item left, still explicitly gated on the user revisiting BUG-3's scope decision — no conversation opened this session, by the user's own choice ("just push + clean up").
+- Low-priority, unscheduled, unchanged: BUG-5, frontend coverage gaps on untested page shells.
+
+**Exact next task:** None scheduled. If/when the user wants to revisit the remote branch, or open the Phase 4 conversation, either can be picked up independently — no dependency between them.
+
+---
 
 ### 2026-07-19 (checkpoint, 8) — State verification only, no code changes
 
