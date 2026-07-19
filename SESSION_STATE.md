@@ -1,10 +1,35 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (Phase 4 kickoff: retention policy) — on `feature/v1.3-planning`; job/log retention implemented, tested, not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (checkpoint, 10) — state verification only, no code changes. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (checkpoint, 10) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing from "Phase 4 kickoff: retention policy" immediately below. Found the retention-policy changes already committed (`85495bd`, "Add job retention policy") — committed out-of-band since the last turn, not via this conversation's own `/commit`. No application logic touched this session.
+
+- **Branch:** `feature/v1.3-planning`, tip `85495bd`. **No upstream tracking** (`git branch -vv` shows no `[origin/...]`) — this branch is local-only, never pushed.
+- **Working tree:** clean, nothing uncommitted.
+- **Backend tests:** `python -m pytest tests/ -v` → **172 passed**, 1 pre-existing warning — matches (164 prior + 8 new from the retention policy).
+- **Frontend tests:** `npm run test -- --run` → **58 passed** (11 files) — unaffected, matches.
+- **Frontend build:** `npm run build` → clean.
+- **Frontend lint:** `npm run lint` → clean except the same 2 pre-existing warnings (`JobTimeline.tsx`, `JobArtifacts.tsx`, `react(only-export-components)`).
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **`feature/v1.3-planning` has never been pushed** — no remote copy exists at all yet, unlike every prior branch this session dealt with.
+- Phase 4's other two engineering items (real ComfyUI `/interrupt` support, mid-run `generate_script` cancellation) remain open, either pickable independently.
+- Multi-user/remote-access work remains explicitly gated on revisiting BUG-3's scope decision.
+- `origin/feature/v1.2-development` (old, fully-merged branch) still exists on `origin` — deletion still an open, low-priority decision from an earlier session.
+
+**Exact next task:** Decide whether to push `feature/v1.3-planning`, and separately, whether to continue with another Phase 4 item (`/interrupt` support or mid-run cancellation) next.
+
+---
 
 ### 2026-07-19 (Phase 4 kickoff: retention policy) — Job/log retention policy implemented on `feature/v1.3-planning`
 
