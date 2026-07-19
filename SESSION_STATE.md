@@ -1,10 +1,38 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (Phase 4: real ComfyUI /interrupt support) — implemented and tested on `feature/v1.3-planning`, not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-19 (Phase 4: mid-run generate_script cancellation) — implemented and tested on `feature/v1.3-planning`, not yet committed. All three Phase 4 engineering items are now done. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-19 (Phase 4: mid-run generate_script cancellation) — Last Phase 4 engineering item implemented; a real deadlock caught and fixed along the way
+
+**What was completed:** Third and last Phase 4 engineering item, following retention and `/interrupt` support. User asked for a fresh design pass first (worker.py's lifecycle, job status transitions), then approved implementing it directly.
+
+**Design:** `generate_script`'s handler is one blocking `await self._client.chat.completions.create(...)` call with no internal checkpoint — the only way to actually stop it mid-flight is asyncio-level task cancellation, not a cooperative flag check. This required restructuring `SingleSlotWorker._run()`: the handler call now runs as its own wrapped `asyncio.Task` rather than a bare `await`, so a specific job's execution can be cancelled independently of the worker's own outer loop task. New public `cancel_current_job(job_id) -> bool`.
+
+**A real bug found and fixed during implementation, not caught by reasoning alone:** the first version disambiguated "this job's task was cancelled" from "the worker's own outer task was cancelled (`worker.stop()`)" by checking `task.cancelled()` after catching `CancelledError`. This **completely hung `worker.stop()`** — a genuine deadlock, discovered when a test timed out rather than passing or failing cleanly. Root cause: `asyncio.Task.cancel()` automatically propagates to whatever a task is currently suspended on (its `_fut_waiter`) — since `_run()` awaits the inner per-job task directly, cancelling the *outer* task also cancels the *inner* one as an automatic side effect of asyncio's own cancellation machinery, making both scenarios produce an identical `task.cancelled() == True`. There was no way to distinguish them from the task's own state alone. Fixed by tracking explicit intent instead: a new `self._cancel_requested_for: Optional[str]` flag, set by `cancel_current_job()` immediately before it calls `.cancel()`, checked in `_run()`'s except block rather than inferred from ambiguous task state.
+
+**Implementation:**
+- `backend/core/worker.py`: `_current_job`/`_current_job_task`/`_cancel_requested_for` tracked on the instance; `_run()`'s try/except restructured around the wrapped task; new `cancel_current_job(job_id)`.
+- `backend/api/routes/storyboard.py`: `cancel_job`'s old unconditional 409 for a running `generate_script` job replaced with the same CANCELLING-first structure `storyboard` jobs already use (mirrors `request_shot_interrupt`).
+- `README.md`'s endpoint table updated — both halves of the old "storyboard not mid-generation" / "generate_script can't be cancelled" claim were stale after this and the `/interrupt` work.
+- Tests: `tests/test_worker.py` — the old `test_asyncio_cancelled_error_still_propagates` no longer modeled the new architecture correctly (a handler directly raising `CancelledError` is now indistinguishable from a legitimate targeted cancel, since the handler runs in its own task either way) — replaced with a test that actually cancels the *outer* task while a long-running handler is mid-flight, confirming both that cancellation genuinely propagates and that the inner task gets cancelled too. Plus 3 new `cancel_current_job` cases. `tests/test_job_routes.py`: the old `..._is_rejected` test replaced with `..._sets_cancelling`, plus a new test confirming `cancel_current_job` is actually called with the right job id.
+
+**Verification:** `python -c "from backend.app import app"` clean. `python -m pytest tests/ -v` → **192 passed** (188 prior + 4 net new). `npm run test`/`build`/`lint` unaffected, re-confirmed green.
+
+**Files changed:** `backend/core/worker.py`, `backend/api/routes/storyboard.py`, `README.md`, `tests/test_worker.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md`. No frontend files.
+
+**Remaining problems / blockers:** None blocking.
+- **This session's changes are not yet committed** — waiting for approval, per this project's standing convention.
+- **All three Phase 4 engineering items are now done** (retention, `/interrupt`, generate_script cancellation) — none live-validated against real ComfyUI/Ollama instances yet; matching this project's established practice, that's the natural follow-up, not a blocker to calling the code itself done.
+- **Anything multi-user/remote-access** remains explicitly gated on revisiting BUG-3's scope decision — untouched.
+- `feature/v1.3-planning` not yet merged to `master`; `origin/feature/v1.2-development` (old, fully-merged branch) still exists, deletion still an open low-priority decision from an earlier session.
+
+**Exact next task:** Get approval to commit this session's changes, then push. Independently: live-validate both new cancellation paths against real ComfyUI/Ollama, or decide when to merge `feature/v1.3-planning` into `master`.
+
+---
 
 ### 2026-07-19 (Phase 4: real ComfyUI /interrupt support) — Immediate mid-generation cancellation implemented on `feature/v1.3-planning`
 

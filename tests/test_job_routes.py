@@ -255,18 +255,39 @@ def test_cancel_running_storyboard_job_sets_cancelling(tmp_path, monkeypatch):
     assert response.status == JobStatus.CANCELLING.value
 
 
-def test_cancel_running_generate_script_job_is_rejected(tmp_path, monkeypatch):
+def test_cancel_running_generate_script_job_sets_cancelling(tmp_path, monkeypatch):
+    """Previously rejected outright (no per-chunk checkpoint inside its one
+    blocking LLM call) -- now attempts an immediate asyncio-level cancel via
+    worker.cancel_current_job (backend/core/worker.py), same
+    CANCELLING-first structure as storyboard jobs' request_shot_interrupt."""
     store = _store(tmp_path)
     _patch_store_and_worker(monkeypatch, store)
 
     async def scenario():
         await store.create_job("job-1", "generate_script", "running", {"prompt": "x"}, created_at=1.0)
+        return await storyboard_module.cancel_job("job-1")
+
+    response = asyncio.run(scenario())
+
+    assert response.status == JobStatus.CANCELLING.value
+
+
+def test_cancel_running_generate_script_job_calls_worker_cancel_current_job(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _patch_store_and_worker(monkeypatch, store)
+    called_with = []
+    monkeypatch.setattr(
+        storyboard_module.worker, "cancel_current_job",
+        lambda job_id: called_with.append(job_id) or True,
+    )
+
+    async def scenario():
+        await store.create_job("job-1", "generate_script", "running", {"prompt": "x"}, created_at=1.0)
         await storyboard_module.cancel_job("job-1")
 
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(scenario())
+    asyncio.run(scenario())
 
-    assert exc_info.value.status_code == 409
+    assert called_with == ["job-1"]
 
 
 def test_cancel_queued_generate_script_job_succeeds(tmp_path, monkeypatch):

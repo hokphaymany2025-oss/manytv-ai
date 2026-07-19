@@ -111,6 +111,28 @@ class SingleSlotWorker:
         self._handlers: dict[str, JobHandler] = {}
         self._task: Optional[asyncio.Task] = None
         self._store = store or get_job_store()
+        # Tracks whichever job/task _run() is currently awaiting, so
+        # cancel_current_job() below can reach it directly -- the only
+        # mechanism available for a job kind with no cooperative checkpoint
+        # of its own inside its handler (generate_script's single blocking
+        # LLM call; storyboard has its own per-shot check plus ComfyUI's own
+        # /interrupt, see storyboard_engine.py).
+        self._current_job: Optional[Job] = None
+        self._current_job_task: Optional[asyncio.Task] = None
+        # Set by cancel_current_job() just before it cancels the inner task,
+        # so _run()'s except block can tell "this was our own targeted
+        # per-job cancel" apart from "the outer _run() task itself is being
+        # cancelled (worker.stop())". task.cancelled() alone can't
+        # distinguish these: asyncio.Task.cancel() automatically propagates
+        # to whatever a task is currently suspended on (its _fut_waiter) --
+        # since _run() awaits the inner task directly, cancelling the OUTER
+        # task also cancels the inner one as a side effect, making both
+        # scenarios look identical from task.cancelled() alone. Confirmed
+        # the hard way: an earlier version of this relying on
+        # task.cancelled() made worker.stop() hang forever, since it
+        # mistook its own shutdown for a job-level cancel and looped back to
+        # an empty queue instead of re-raising.
+        self._cancel_requested_for: Optional[str] = None
 
     def register_handler(self, kind: str, handler: JobHandler) -> None:
         self._handlers[kind] = handler
@@ -186,11 +208,21 @@ class SingleSlotWorker:
             await self._store.add_job_log(
                 job.id, LogLevel.INFO.value, LogStage.JOB.value, f"Starting job {job.id} ({job.kind})."
             )
+            self._current_job = job
+            task: Optional[asyncio.Task] = None
             try:
                 handler = self._handlers.get(job.kind)
                 if handler is None:
                     raise RuntimeError(f"No handler registered for job kind '{job.kind}'")
-                job.result = await handler(job)
+                # Run the handler as its own Task (not a bare await) so
+                # cancel_current_job() can target *just this job's*
+                # execution -- needed for a kind like generate_script, whose
+                # handler is one uninterruptible blocking LLM call with no
+                # cooperative checkpoint of its own to notice a CANCELLING
+                # signal (unlike storyboard, which checks between shots).
+                task = asyncio.ensure_future(handler(job))
+                self._current_job_task = task
+                job.result = await task
                 job.status = JobStatus.DONE
                 elapsed = time.time() - job.started_at
                 logger.info("Job %s completed in %.1fs.", job.id, elapsed)
@@ -199,7 +231,27 @@ class SingleSlotWorker:
                     f"Job {job.id} completed in {elapsed:.1f}s.",
                 )
             except asyncio.CancelledError:
-                raise
+                if self._cancel_requested_for == job.id:
+                    # Our own targeted cancel_current_job() call for this
+                    # exact job -- not this loop's own outer task
+                    # (self._task, cancelled by stop()). Finalize like
+                    # JobCancelled below and keep the loop running.
+                    job.status = JobStatus.CANCELLED
+                    logger.info("Job %s cancelled.", job.id)
+                    await self._store.add_job_log(
+                        job.id, LogLevel.INFO.value, LogStage.JOB.value, f"Job {job.id} cancelled."
+                    )
+                else:
+                    # This loop's own task is being cancelled (worker.stop()).
+                    # asyncio.Task.cancel() already propagates to whatever a
+                    # task is currently suspended on (its _fut_waiter, here
+                    # the inner `task`), so the inner task is very likely
+                    # already cancelled too by this point -- calling
+                    # task.cancel() again is a harmless no-op if so, and a
+                    # real safety net if for some reason it wasn't.
+                    if task is not None:
+                        task.cancel()
+                    raise
             except JobCancelled:
                 job.status = JobStatus.CANCELLED
                 logger.info("Job %s cancelled.", job.id)
@@ -214,6 +266,9 @@ class SingleSlotWorker:
                     job.id, LogLevel.ERROR.value, LogStage.JOB.value, f"Job {job.id} failed: {job.error}"
                 )
             finally:
+                self._current_job = None
+                self._current_job_task = None
+                self._cancel_requested_for = None
                 job.finished_at = time.time()
                 await self._store.update_job_status(
                     job.id, job.status.value, finished_at=job.finished_at,
@@ -221,6 +276,31 @@ class SingleSlotWorker:
                 )
                 release_gpu_memory()
                 self._queue.task_done()
+
+    def cancel_current_job(self, job_id: str) -> bool:
+        """Best-effort, immediate cancellation for whichever job is actually
+        executing right now, if its id matches -- the mechanism for a job
+        kind with no cooperative checkpoint of its own inside its handler
+        (today: generate_script). Cancels the asyncio Task wrapping the
+        handler call directly, rather than relying on the handler to notice
+        anything itself.
+
+        Returns True only if job_id was genuinely the job executing right
+        now and its task was cancelled; False otherwise (already finished,
+        a different job is running, or nothing is running at all) -- the
+        caller should treat False as "nothing to cancel this way", not as a
+        silent success.
+        """
+        if (
+            self._current_job is not None
+            and self._current_job.id == job_id
+            and self._current_job_task is not None
+            and not self._current_job_task.done()
+        ):
+            self._cancel_requested_for = job_id
+            self._current_job_task.cancel()
+            return True
+        return False
 
 
 worker = SingleSlotWorker()

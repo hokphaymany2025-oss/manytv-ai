@@ -242,27 +242,105 @@ def test_job_cancelled_exception_marks_job_cancelled_not_failed(tmp_path):
     assert row["error"] is None
 
 
-def test_asyncio_cancelled_error_still_propagates(tmp_path):
+def test_worker_stop_style_cancellation_propagates_and_cancels_the_inner_job_task(tmp_path):
+    """Simulates worker.stop()'s exact mechanism (self._task.cancel() on
+    _run()'s own outer task) while a job's handler is in flight, now that
+    the handler runs as its own wrapped Task (see cancel_current_job).
+    Must both (a) genuinely propagate and stop the outer loop -- not be
+    swallowed by the new per-job-task cancellation branch, which only
+    triggers when the *inner* task itself was the one cancelled -- and
+    (b) cancel the still-running inner job task too, since asyncio doesn't
+    do that automatically for a separate Task that isn't the thing directly
+    being awaited-and-cancelled.
+    """
     store = _store(tmp_path)
     worker = SingleSlotWorker(store=store)
+    started = asyncio.Event()
 
     async def handler(job: Job) -> dict:
-        raise asyncio.CancelledError()
+        started.set()
+        await asyncio.sleep(100)
+        return {}
 
     worker.register_handler("test", handler)
 
     async def scenario():
         await worker.submit("test", {})
-        task = asyncio.create_task(worker._run())
-        for _ in range(100):
-            if task.done():
-                break
-            await asyncio.sleep(0.05)
-        assert task.done()
+        outer_task = asyncio.create_task(worker._run())
+        await started.wait()
+        inner_task = worker._current_job_task
+        outer_task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            await outer_task
+        assert inner_task.cancelled()
 
     asyncio.run(scenario())
+
+
+def test_cancel_current_job_cancels_the_actually_running_job(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    started = asyncio.Event()
+
+    async def handler(job: Job) -> dict:
+        started.set()
+        await asyncio.sleep(100)
+        return {}
+
+    worker.register_handler("test", handler)
+
+    async def scenario():
+        job = await worker.submit("test", {})
+        run_task = asyncio.create_task(worker._run())
+        await started.wait()
+        result = worker.cancel_current_job(job.id)
+        await asyncio.wait_for(worker._queue.join(), timeout=5)
+        run_task.cancel()
+        try:
+            await run_task
+        except asyncio.CancelledError:
+            pass
+        return job.id, result
+
+    job_id, result = asyncio.run(scenario())
+    row = asyncio.run(store.get_job(job_id))
+
+    assert result is True
+    assert row["status"] == JobStatus.CANCELLED.value
+
+
+def test_cancel_current_job_returns_false_for_a_different_job_id(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+    started = asyncio.Event()
+
+    async def handler(job: Job) -> dict:
+        started.set()
+        await asyncio.sleep(100)
+        return {}
+
+    worker.register_handler("test", handler)
+
+    async def scenario():
+        await worker.submit("test", {})
+        run_task = asyncio.create_task(worker._run())
+        await started.wait()
+        result = worker.cancel_current_job("some-other-job-id")
+        run_task.cancel()
+        try:
+            await run_task
+        except asyncio.CancelledError:
+            pass
+        return result
+
+    assert asyncio.run(scenario()) is False
+
+
+def test_cancel_current_job_returns_false_when_nothing_is_running(tmp_path):
+    store = _store(tmp_path)
+    worker = SingleSlotWorker(store=store)
+
+    assert worker.cancel_current_job("no-such-job") is False
 
 
 def test_successful_job_writes_started_and_completed_log_entries(tmp_path):
