@@ -4,11 +4,23 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+# Caps on free-text request fields -- none of these are tied to ComfyUI/LLM
+# capability, just a bound against an unbounded request body (no request
+# size limits existed before). Generous relative to any realistic use.
+_MAX_PROMPT_LENGTH = 4000
+_MAX_TONE_LENGTH = 100
+_MAX_SCRIPT_LENGTH = 20000
+_MAX_SHOT_TEXT_LENGTH = 4000
+
 
 class ScriptGenerationRequest(BaseModel):
-    prompt: str = Field(..., description="High-level idea/topic for the video script.")
+    prompt: str = Field(
+        ..., max_length=_MAX_PROMPT_LENGTH, description="High-level idea/topic for the video script."
+    )
     target_duration_seconds: int = Field(30, ge=5, le=600)
-    tone: str = Field("neutral", description="e.g. 'dramatic', 'comedic', 'documentary'")
+    tone: str = Field(
+        "neutral", max_length=_MAX_TONE_LENGTH, description="e.g. 'dramatic', 'comedic', 'documentary'"
+    )
     project_id: Optional[str] = Field(
         default=None,
         description=(
@@ -26,13 +38,15 @@ class ScriptGenerationResponse(BaseModel):
 
 class StoryboardShot(BaseModel):
     index: int
-    description: str = ""
-    prompt: str
-    negative_prompt: str = ""
+    description: str = Field("", max_length=_MAX_SHOT_TEXT_LENGTH)
+    prompt: str = Field(..., max_length=_MAX_SHOT_TEXT_LENGTH)
+    negative_prompt: str = Field("", max_length=_MAX_SHOT_TEXT_LENGTH)
 
 
 class StoryboardRequest(BaseModel):
-    script: str = Field(..., description="Full script text; ignored if `shots` is provided.")
+    script: str = Field(
+        ..., max_length=_MAX_SCRIPT_LENGTH, description="Full script text; ignored if `shots` is provided."
+    )
     workflow_name: str = Field(
         "default_t2v",
         pattern=r"^[A-Za-z0-9_-]+$",

@@ -1,10 +1,150 @@
 # ManyTV — Session State
 
-**Last updated:** 2026-07-19 (checkpoint, 13) — State verification only, no code changes. Confirms the "branch pushed" entry immediately below; its doc updates are staged but not yet committed. Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
+**Last updated:** 2026-07-20 (checkpoint, 16) — State verification only, no code changes. Confirms the "TODO.md lockfile-entry fix" entry immediately below; three sessions' worth of changes remain staged but not committed (git still unavailable in this session's shell — see below). Purpose of this file: let the next session (human or agent) pick up context immediately without re-deriving it. Update this file at the end of each work session — append a new dated entry to the Session Log rather than overwriting prior entries.
 
 ---
 
 ## Session Log
+
+### 2026-07-20 (checkpoint, 16) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "TODO.md lockfile-entry fix" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning` (per the environment's own initial snapshot at the start of this multi-session conversation — **`git status`/`git log --oneline -10` could not be run this pass**: `git` still not recognized in this shell. This is now the **8th consecutive check** in this conversation with the identical result.
+- **Working tree (inferred, not git-confirmed):** across the last three sessions — `backend/models/schemas.py`, `tests/test_schemas.py` (request size limits), `backend/core/artifacts.py`, `tests/test_job_routes.py` (stat() caching), `TODO.md` (both the request-size-limits/stat()-caching entries and the lockfile stale-entry fix), `SESSION_STATE.md` (this and every preceding entry). No unexpected files known of.
+- **Backend:** `.venv\Scripts\python.exe -c "from backend.app import app"` → `import OK`. Full `.venv\Scripts\python.exe -m pytest tests/ -v` re-run this pass → **203 passed** (56.90s), same 2 pre-existing warnings — matches every prior session exactly, confirming nothing regressed.
+- **Frontend:** not re-run this pass (same `npm` unavailability) — no frontend files touched in several sessions; nothing expected to have changed, but not freshly confirmed.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **Three sessions' worth of changes remain staged but uncommitted**: request size limits, per-artifact `stat()` caching, and the `TODO.md` lockfile-entry fix, plus all accompanying `SESSION_STATE.md`/`TODO.md` bookkeeping. All waiting on `/commit`, which needs a working `git`.
+- **`git`/`npm` unavailability: 8 consecutive checks, unresolved.** No git-independent busywork remains identified — the next session hitting this gap needs either the blocker resolved or explicit user direction (manual git, or picking from smaller/less-clear-cut remaining items: `origin/feature/v1.2-development` deletion, frontend coverage work that also can't be verified in-session).
+- **`feature/v1.3-planning` → `master` merge still not done** — the longest-standing open item in the project, unchanged, blocked purely on tooling access.
+
+**Exact next task:** Resolve the `git`/`npm` unavailability, or get explicit user direction on how to proceed without it. Once resolved: commit all three sessions' staged changes, then revisit the `master` merge.
+
+---
+
+### 2026-07-20 (TODO.md lockfile-entry fix) — Doc-only correction; `git`/`npm` unavailability now a 7-check-running open problem
+
+**What was completed:** Ran `/analyze`, `/next_tasks`, then `/implement`. Re-checked `git`/`npm` at the start of this pass — still unavailable, same result as every prior check this conversation. With both git-independent P3 code items already closed in the two sessions before this one, the only concretely-actionable, git-independent item left was the stale `TODO.md` entry named in the prior `/next_tasks` output: "Dependency pinning/lockfile" was still listed as open (`[ ]`, P2) in the "Missing features" section, despite the same file's own Phase 1 section and "Recommended next steps" list both already recording it as done (`cef06c7`, "Add backend dependency lockfile") — confirmed `requirements.lock.txt` actually exists in the repo root before editing, not just trusting the file's own claim.
+
+**Implementation:** `TODO.md` line 290 — changed from `- [ ] **Dependency pinning/lockfile.** ...` to a struck-through `[x]` entry pointing back at the Phase 1 completion and explaining the entry was simply never updated when that work landed. Doc-only, no application or test code touched.
+
+**Verification:** Ran the full backend suite anyway as a sanity check per `/implement`'s standing process, despite this being a non-code change — `.venv\Scripts\python.exe -m pytest tests/ -v` → **203 passed** (56.74s), unchanged from the last checkpoint, confirming nothing regressed. Frontend not run — `npm`/`node` still unavailable.
+
+**Files changed:** `TODO.md`, `SESSION_STATE.md` only.
+
+**Remaining problems / blockers:**
+- **`git`/`npm` unavailability is now confirmed across 7 consecutive checks this conversation.** This remains the dominant blocker: two full prior sessions' worth of tested, documented work (request size limits; per-artifact `stat()` caching) plus this session's doc fix are all staged but **not committed**.
+- **All git-independent busywork identified so far is now exhausted** — both P3 code items and the one clear stale-doc fix are done. Any further session hitting this same gap will have nothing left to substitute and will need the actual blocker resolved, or explicit direction from the user on how to proceed (e.g. handling git manually, or picking from less-clear-cut remaining items like the `origin/feature/v1.2-development` branch-deletion decision or frontend coverage work that also can't be verified in-session).
+- **The merge of `feature/v1.3-planning` into `master` is still not done** — unchanged, now the longest-standing open item in the project, blocked purely on tooling access rather than any remaining design or scope question.
+
+**Exact next task:** Resolve the `git`/`npm` unavailability, or get explicit direction from the user on how to proceed without it. Once resolved: commit all three sessions' worth of staged changes in one pass (or as the user prefers), then revisit merging `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-20 (checkpoint, 15) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "per-artifact stat() caching" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning` (per the environment's own initial snapshot at the start of this multi-session conversation — **`git status`/`git log --oneline -10` could not be run this pass either**: `git` is still not recognized in this shell, same result as the prior four sessions/checks. This is now confirmed unresolved across **five consecutive checks** in this conversation.
+- **`npm`/`node`:** not re-checked this specific pass (already re-confirmed unavailable twice in the two sessions immediately prior); no reason to expect it changed since nothing in the environment was altered.
+- **Working tree (inferred, not git-confirmed):** `backend/core/artifacts.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md` modified — matches exactly what the prior "per-artifact stat() caching" session left uncommitted, on top of the still-uncommitted `backend/models/schemas.py`/`tests/test_schemas.py` changes from the "request size limits" session before that. No unexpected files known of.
+- **Backend:** `.venv\Scripts\python.exe -c "from backend.app import app"` → `import OK`. Full `.venv\Scripts\python.exe -m pytest tests/ -v` re-run this pass → **203 passed** (114.24s), same 2 pre-existing warnings (`StarletteDeprecationWarning`, a `.pytest_cache` permission-denied warning) — matches the prior session exactly, confirming nothing regressed.
+- **Frontend:** not re-run this pass (same `npm` unavailability) — no frontend files have been touched in several sessions, so nothing is expected to have changed, but this remains inferred, not freshly confirmed.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **Two sessions' worth of changes are staged but not committed**: `backend/models/schemas.py`, `tests/test_schemas.py` (request size limits) and `backend/core/artifacts.py`, `tests/test_job_routes.py` (stat() caching), plus this conversation's `TODO.md`/`SESSION_STATE.md` updates throughout. All waiting on `/commit`, which itself needs a working `git`.
+- **`git`/`npm` unavailability is now a 5-check-running, unresolved environment problem**, not a transient blip. Nothing in this conversation has been able to fix it from inside the session (tried `Get-Command`, PATH search, common install directories, and running with sandboxing disabled — all in prior sessions). This is the single highest-priority blocker in the project right now, ahead of any remaining feature work.
+- **The merge of `feature/v1.3-planning` into `master` is still not done** — blocked on the same gap, four sessions running now.
+- Both git-independent P3 items originally available as fallback work are now closed (request size limits, stat() caching) — no more busywork of that shape remains; the next session hitting this same gap will need the issue actually resolved, the user handling git directly, or to fall back to smaller/less-clear-cut items (`origin/feature/v1.2-development` deletion decision, the stale lockfile TODO entry, or frontend coverage gaps).
+
+**Exact next task:** Resolve the `git`/`npm` unavailability, or have the user confirm how they'd like to proceed given it (e.g. running `/commit`'s equivalent git commands themselves, as already handed to them once this conversation). Once resolved: commit the two sessions' worth of staged changes, then revisit merging `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-20 (per-artifact stat() caching) — Closed the other named P3 item; `git`/`npm` still unavailable in this session's shell
+
+**What was completed:** Ran `/analyze`, `/next_tasks`, then `/implement`. The recommended task (confirm last session's commit landed, then merge `feature/v1.3-planning` into `master`) was still blocked — re-checked via `Get-Command git`/`Get-Command npm` at the start of this pass, both still unresolved, same as the prior two sessions. Per `AskUserQuestion`, picked the other remaining named P3 item — caching per-artifact `stat()` — over investigating the `git`/`npm` gap directly this pass.
+
+**Implementation:** `backend/core/artifacts.py` — `_artifact_from_path` previously called `Path.stat()` on every invocation, i.e. on every job-status read (`GET /api/jobs`, `GET /api/jobs/{id}`, retry, cancel, and every `job_updated` SSE snapshot, all of which funnel through `_build_job_status_response`). Added a module-level `_artifact_cache: dict[str, ArtifactResponse]` keyed by the raw path string. Justified as cacheable indefinitely (no TTL/invalidation needed): a `DONE` shot's `files` entry is set exactly once and never rewritten (confirmed against `job_store.py`'s upsert semantics), so a given path's metadata can't change after its first lookup — including a missing file's cached `None` size, since nothing in this codebase ever writes a *new* file at a path already recorded in `shots.files`. Deliberately not wired into `retention.py`'s pruning — the cache is tiny (one entry per output file) at this project's current scale, matching this exact TODO item's own prior "cheap at current scale" framing.
+
+Tests: `tests/test_job_routes.py` (+2 — a real file's `Path.stat()` is called exactly once across two lookups of the same path; a missing file's `None` result is cached the same way).
+
+**Verification:**
+- Backend: `.venv\Scripts\python.exe -m pytest tests/ -v` → **203 passed** (201 prior + 2 new), same 2 pre-existing warnings as always.
+- Frontend: **not re-run this session** — `npm`/`node` still unavailable (re-confirmed via `Get-Command`). This change is backend-only (one core module + one test file), so the frontend suite is logically unaffected, but this remains an inference, not a fresh confirmation, for the fourth session running.
+
+**Files changed:** `backend/core/artifacts.py`, `tests/test_job_routes.py`, `TODO.md`, `SESSION_STATE.md`. No frontend files.
+
+**Remaining problems / blockers:**
+- **This session's changes are not committed** — waiting on `/commit`, which itself needs a working `git`.
+- **`git` and `npm`/`node` remain unavailable in this session's shell** — now confirmed unresolved across four consecutive sessions. This has become the single most impactful open problem: it blocks committing, merging, and any frontend verification, and two sessions in a row have had to route around it into P3 busywork instead of the actual highest-priority task. Strongly worth dedicating a session specifically to root-causing this (PATH inspection, checking whether this environment is supposed to have dev tooling installed at all, or confirming with the user whether a different terminal/session should be used for git operations) rather than deferring it again.
+- **The merge of `feature/v1.3-planning` into `master` is still not done** — blocked on the same gap, now three sessions running.
+- Both named P3 items from the original `TODO.md` analysis (request size limits, stat() caching) are now closed — there is no more git-independent busywork of this shape left to reach for next time this gap recurs. The next session hitting the same `git`/`npm` unavailability will need to either resolve it, have the user act on git directly, or pick from smaller/less-clear-cut remaining items (`origin/feature/v1.2-development` deletion decision, the stale lockfile TODO entry, or frontend coverage gaps).
+
+**Exact next task:** Resolve the `git`/`npm` unavailability (or confirm with the user how to proceed given it), then commit this session's + the prior session's staged changes via `/commit`, then revisit merging `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-20 (checkpoint, 14) — State verification only, no code changes
+
+**What was completed:** Ran `/checkpoint`, continuing directly from the "request size limits" session immediately below. No application logic touched.
+
+- **Branch:** `feature/v1.3-planning` (per the environment's own initial snapshot at session start — could not independently re-verify via `git status`/`git log` this pass, see below).
+- **`git` is still unavailable in this session's shell** — re-checked via `Get-Command git`, same result as the prior session (not found, not with sandboxing disabled either). `git status`/`git log --oneline -10` could not be run. **`npm`/`node` also still unavailable**, re-confirmed via `Get-Command npm`.
+- **Working tree (inferred, not git-confirmed):** `backend/models/schemas.py`, `tests/test_schemas.py`, `TODO.md`, `SESSION_STATE.md` modified — matches exactly what the prior "request size limits" session left uncommitted. No unexpected files known of.
+- **Backend:** `.venv\Scripts\python.exe -c "from backend.app import app"` → `import OK`. Full `.venv\Scripts\python.exe -m pytest tests/ -v` re-run this pass → **201 passed**, same 2 pre-existing warnings (`StarletteDeprecationWarning`, a `.pytest_cache` permission-denied warning) — matches the prior session exactly, confirming nothing regressed.
+- **Frontend:** not re-run this pass either (same `npm` unavailability) — no frontend files have been touched since the last confirmed-green run recorded in earlier sessions (58 passed / clean build / clean lint), so nothing is expected to have changed, but this is inferred, not freshly confirmed.
+
+**Files changed:** `SESSION_STATE.md` only (this entry).
+
+**Current task:** None in progress — verification-only pass.
+
+**Remaining problems / blockers:** None new.
+- **This session's + the prior session's changes (`backend/models/schemas.py`, `tests/test_schemas.py`, `TODO.md`, `SESSION_STATE.md`) are staged but not committed** — waiting on `/commit`, which itself needs a working `git`.
+- **`git` and `npm`/`node` are both unavailable in this session's shell** — a real, recurring environment gap now confirmed across two consecutive sessions (not a one-off). Blocks committing, pushing, merging, and running any frontend command directly. Worth investigating (PATH, missing install, sandbox config) before it blocks something more time-sensitive.
+- **The merge of `feature/v1.3-planning` into `master` is still not done** — the original task from two sessions ago, still blocked on the same `git` unavailability, or needs the user to do it manually outside this environment.
+- Unchanged from prior sessions: `origin/feature/v1.2-development` deletion still open/low-priority; multi-user/remote-access work still gated on revisiting BUG-3's scope.
+
+**Exact next task:** Resolve the `git`/`npm` unavailability (investigate PATH/installation, or confirm this session's environment is simply missing dev tooling by design), then commit the staged request-size-limits + docs changes via `/commit`, then revisit merging `feature/v1.3-planning` into `master`.
+
+---
+
+### 2026-07-20 (request size limits) — `max_length` caps added to free-text request fields; `git`/`npm` found unavailable in this session's shell
+
+**What was completed:** Ran `/analyze`, then `/next_tasks` (recommended merging `feature/v1.3-planning` into `master`, per the prior session's "pure scheduling" conclusion), then `/implement`. The originally-approved task (the merge) turned out to be blocked: **`git` is not available in this session's shell at all** — not found via `Get-Command`, PATH search, or common install directories (`C:\Program Files\Git\...`), and still not found with sandboxing explicitly disabled. Confirmed via `AskUserQuestion` with the user to switch to a code task instead of investigating further this pass. Also picked, via a second `AskUserQuestion`, between the two remaining named P3 items (request size limits vs. caching per-artifact `stat()`) — **request size limits** was chosen.
+
+**Implementation:** `backend/models/schemas.py` — added hardcoded `Field(max_length=...)` constraints (module-level `_MAX_*` constants), matching BUG-2's `workflow_name` precedent of validating at the Pydantic model boundary rather than adding a new `Settings`/`.env` knob:
+- `ScriptGenerationRequest.prompt` → 4000 chars, `.tone` → 100 chars
+- `StoryboardRequest.script` → 20000 chars
+- `StoryboardShot.description`/`.prompt`/`.negative_prompt` → 4000 chars each — included beyond the two fields originally named in `TODO.md` ("prompt/script") since an explicit `shots` list bypasses `script`-splitting entirely and is the same unbounded-free-text input class.
+
+Tests: `tests/test_schemas.py` (+9 cases — over-limit rejected / at-limit accepted, for every capped field).
+
+**Verification:**
+- Backend: `.venv\Scripts\python.exe -m pytest tests/ -v` → **201 passed** (192 prior + 9 new), same 2 pre-existing warnings as always (`StarletteDeprecationWarning`, a `.pytest_cache` permission-denied warning — both harmless, unrelated to this change).
+- Frontend: **not re-run this session** — `npm`/`node` are also not available in this shell (same class of gap as `git`; confirmed via `Get-Command`/PATH search). This change is backend-only (one model file + one test file), so the frontend suite is logically unaffected, but this is an inference, not a fresh confirmation.
+
+**Files changed:** `backend/models/schemas.py`, `tests/test_schemas.py`, `TODO.md`, `SESSION_STATE.md`. No frontend files.
+
+**Remaining problems / blockers:**
+- **This session's changes are not committed** — per `/implement`'s standing convention, waiting on `/commit`.
+- **`git` and `npm`/`node` are both unavailable in this session's shell environment** — a new, previously-unencountered environment gap (every prior session's logs describe extensive git/npm usage, so this is either a fresh sandbox/container without dev tooling installed, or a PATH issue specific to this session). Blocks any git operation (merge, push, commit) and any frontend command from being run directly by the agent this session. Worth investigating before the next session needs either.
+- **The actual originally-requested task — merging `feature/v1.3-planning` into `master` — is still not done**, for the same reason. Nothing technical blocks it; it now also needs either a working `git` in-session or the user performing it manually.
+- Everything else unchanged from the prior entry: `origin/feature/v1.2-development` deletion still open/low-priority; multi-user/remote-access work still gated on revisiting BUG-3's scope.
+
+**Exact next task:** Get approval to commit this session's `max_length` changes via `/commit` (needs a working `git`, or manual commit by the user). Independently: resolve the `git`/`npm` availability gap, then revisit merging `feature/v1.3-planning` into `master`.
+
+---
 
 ### 2026-07-19 (checkpoint, 13) — State verification only, no code changes
 

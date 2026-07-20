@@ -8,6 +8,7 @@ introducing a TestClient-based harness for just this module.
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -599,6 +600,53 @@ def test_artifact_from_path_missing_file_has_null_size_not_an_exception(tmp_path
     assert artifact.filename == "gone.mp4"
     assert artifact.size_bytes is None
     assert artifact.content_type == "video/mp4"  # derived from the extension, no I/O needed
+
+
+def test_artifact_from_path_only_stats_a_given_path_once(tmp_path, monkeypatch):
+    """Repeated calls for the same path (e.g. successive job-status polls)
+    must not re-run a filesystem stat() -- confirms the cache added to close
+    the 'un-cached per-artifact stat() on every poll' TODO item."""
+    real_file = tmp_path / "video.mp4"
+    real_file.write_bytes(b"fake video data")
+    expected_size = real_file.stat().st_size
+
+    stat_calls = 0
+    original_stat = Path.stat
+
+    def counting_stat(self, *args, **kwargs):
+        nonlocal stat_calls
+        stat_calls += 1
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", counting_stat)
+
+    first = _artifact_from_path(str(real_file))
+    second = _artifact_from_path(str(real_file))
+
+    assert stat_calls == 1
+    assert first.size_bytes == expected_size
+    assert second.size_bytes == expected_size
+
+
+def test_artifact_from_path_caches_a_missing_files_null_size_too(tmp_path, monkeypatch):
+    missing_path = str(tmp_path / "gone.mp4")
+
+    stat_calls = 0
+    original_stat = Path.stat
+
+    def counting_stat(self, *args, **kwargs):
+        nonlocal stat_calls
+        stat_calls += 1
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", counting_stat)
+
+    first = _artifact_from_path(missing_path)
+    second = _artifact_from_path(missing_path)
+
+    assert stat_calls == 1
+    assert first.size_bytes is None
+    assert second.size_bytes is None
 
 
 def test_get_job_status_reports_real_artifact_metadata_for_a_done_shot(tmp_path, monkeypatch):
